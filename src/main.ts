@@ -11,7 +11,7 @@ import './style.css';
 import { findCards, getCard } from './pokemon/scannerInicializer';
 import type { CardNumber, PricedCard } from './pokemon/scannerInicializer';
 import type { CardResumeModel } from '@tcgdex/sdk';
-import { captureGuide, startCamera, stopCamera } from './scanner/camera';
+import { captureGuide, showPhoto, startCamera, stopCamera } from './scanner/camera';
 import { scanCard, warmUpOcr } from './scanner/ocr';
 
 // ---------------------------------------------------------------------------
@@ -23,19 +23,35 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
   <header class="top">
-    <h1>Pokémon Scanner</h1>
+    <img class="logo" src="/mimikyu.svg" alt="" />
+    <div>
+      <h1>Pokémon Scanner</h1>
+      <p class="tagline">Show me a card and I’ll tell you what it’s worth ✨</p>
+    </div>
   </header>
 
   <!-- Live camera feed, with a card-shaped frame drawn over it -->
   <section class="viewfinder">
     <video id="video" playsinline muted></video>
-    <div id="guide" class="guide"></div>
-    <p id="camera-hint" class="camera-hint">Camera is off</p>
+    <!-- A photo from the phone's camera app is shown here instead of the live feed -->
+    <img id="photo" class="photo" alt="" hidden />
+    <div id="guide" class="guide">
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+      <span class="scanline"></span>
+    </div>
+    <p id="camera-hint" class="camera-hint">Take a photo of your card, or start the live camera and line it up inside the frame</p>
   </section>
 
   <div class="controls">
     <button id="camera-btn" type="button">Start camera</button>
     <button id="scan-btn" type="button" class="primary" disabled>Scan card</button>
+    <!-- capture="environment" makes phones open the back camera straight away;
+         on a computer this is a normal "choose a file" dialog -->
+    <label class="photo-btn">
+      📸 Take a photo
+      <input id="photo-input" type="file" accept="image/*" capture="environment" class="visually-hidden" />
+    </label>
   </div>
 
   <!-- Filled in automatically by a scan, but can also be typed in by hand -->
@@ -49,11 +65,19 @@ app.innerHTML = `
   <p id="status" class="status" role="status"></p>
   <ul id="results" class="results"></ul>
   <article id="detail" class="detail" hidden></article>
+
+  <footer class="credits">
+    Unofficial fan project. Not affiliated with Nintendo, Game Freak or The Pokémon Company.
+    Card data from <a href="https://tcgdex.dev" target="_blank" rel="noopener">TCGdex</a>.
+  </footer>
 `;
 
 // Grab references to the elements we just created.
 // The "!" tells TypeScript "this definitely exists" (we just created it above).
+const viewfinder = document.querySelector<HTMLElement>('.viewfinder')!;
 const video = document.querySelector<HTMLVideoElement>('#video')!;
+const photo = document.querySelector<HTMLImageElement>('#photo')!;
+const photoInput = document.querySelector<HTMLInputElement>('#photo-input')!;
 const guide = document.querySelector<HTMLDivElement>('#guide')!;
 const cameraHint = document.querySelector<HTMLParagraphElement>('#camera-hint')!;
 const cameraBtn = document.querySelector<HTMLButtonElement>('#camera-btn')!;
@@ -111,6 +135,7 @@ cameraBtn.addEventListener('click', async () => {
     cameraBtn.textContent = 'Start camera';
     scanBtn.disabled = true;
     cameraHint.hidden = false;
+    viewfinder.classList.remove('live');
     return;
   }
   // Camera is off -> turn it on
@@ -119,6 +144,8 @@ cameraBtn.addEventListener('click', async () => {
     cameraBtn.textContent = 'Stop camera';
     scanBtn.disabled = false;
     cameraHint.hidden = true;
+    photo.hidden = true;
+    viewfinder.classList.add('live');
     // Start downloading the OCR model now, while the user lines up the card
     warmUpOcr();
   } catch (error) {
@@ -127,13 +154,40 @@ cameraBtn.addEventListener('click', async () => {
   }
 });
 
-// "Scan card": capture -> read text -> search
-scanBtn.addEventListener('click', async () => {
+// "Scan card": grab the live frame and scan it
+scanBtn.addEventListener('click', () => runScan(video));
+
+// "Take a photo": the phone opens its camera app; once a photo comes back,
+// show it in the viewfinder and scan it straight away
+photoInput.addEventListener('change', async () => {
+  const file = photoInput.files?.[0];
+  // Clear the input so picking the same file again still fires "change"
+  photoInput.value = '';
+  if (!file) return;
+
+  // The live camera isn't needed while looking at a photo
+  if (stream) cameraBtn.click();
+  try {
+    await showPhoto(photo, file);
+  } catch {
+    setStatus("Couldn't open that picture. Try another photo.");
+    return;
+  }
+  photo.hidden = false;
+  cameraHint.hidden = true;
+  await runScan(photo);
+});
+
+// The shared scan flow for both the live camera and photos:
+// capture the frame -> read text -> search
+async function runScan(source: HTMLVideoElement | HTMLImageElement): Promise<void> {
   // Disable the button so a double-tap can't start two scans at once
   scanBtn.disabled = true;
+  // Shows the moving scan line over the frame while OCR runs
+  viewfinder.classList.add('scanning');
   try {
     setStatus('Reading card…');
-    const result = await scanCard(captureGuide(video, guide));
+    const result = await scanCard(captureGuide(source, guide));
     // Open the browser dev tools console to see what OCR actually read
     console.debug('OCR header:', result.rawName, '| footer:', result.rawNumber);
 
@@ -144,17 +198,18 @@ scanBtn.addEventListener('click', async () => {
       : '';
 
     if (!result.name) {
-      setStatus("Couldn't read the card name. Hold the card flat inside the frame, or type it below.");
+      setStatus("Couldn't read the card name. Make sure the card fills the frame, or type it below.");
       return;
     }
     await search(result.name, result.number);
   } catch (error) {
     setStatus(`Scan failed: ${(error as Error).message}`);
   } finally {
+    viewfinder.classList.remove('scanning');
     // Re-enable the button, unless the camera was turned off mid-scan
     scanBtn.disabled = !stream;
   }
-});
+}
 
 // Manual "Search" button (also used after correcting a bad scan)
 searchForm.addEventListener('submit', async (event) => {
