@@ -1,0 +1,284 @@
+/**
+ * App entry point: builds the page and wires up the buttons.
+ *
+ * The flow of a scan:
+ *   camera.ts                -> grab a picture of the card inside the frame
+ *   ocr.ts                   -> read the name and number off that picture
+ *   scannerInicializer.ts    -> look those up in the TCGdex database
+ *   this file                -> show the matches / the card's details
+ */
+import './style.css';
+import { findCards, getCard } from './pokemon/scannerInicializer';
+import type { CardNumber, PricedCard } from './pokemon/scannerInicializer';
+import type { CardResumeModel } from '@tcgdex/sdk';
+import { captureGuide, startCamera, stopCamera } from './scanner/camera';
+import { scanCard, warmUpOcr } from './scanner/ocr';
+
+// ---------------------------------------------------------------------------
+// Page layout
+// ---------------------------------------------------------------------------
+
+// index.html only contains an empty <div id="app">; we fill it in here
+const app = document.querySelector<HTMLDivElement>('#app')!;
+
+app.innerHTML = `
+  <header class="top">
+    <h1>Pokémon Scanner</h1>
+  </header>
+
+  <!-- Live camera feed, with a card-shaped frame drawn over it -->
+  <section class="viewfinder">
+    <video id="video" playsinline muted></video>
+    <div id="guide" class="guide"></div>
+    <p id="camera-hint" class="camera-hint">Camera is off</p>
+  </section>
+
+  <div class="controls">
+    <button id="camera-btn" type="button">Start camera</button>
+    <button id="scan-btn" type="button" class="primary" disabled>Scan card</button>
+  </div>
+
+  <!-- Filled in automatically by a scan, but can also be typed in by hand -->
+  <form id="search" class="search">
+    <label>Name <input id="name-input" name="name" placeholder="e.g. Charizard ex" autocomplete="off" /></label>
+    <label>Number <input id="number-input" name="number" placeholder="e.g. 136/189" autocomplete="off" /></label>
+    <button type="submit">Search</button>
+  </form>
+
+  <!-- Status messages, the grid of possible matches, and the chosen card's details -->
+  <p id="status" class="status" role="status"></p>
+  <ul id="results" class="results"></ul>
+  <article id="detail" class="detail" hidden></article>
+`;
+
+// Grab references to the elements we just created.
+// The "!" tells TypeScript "this definitely exists" (we just created it above).
+const video = document.querySelector<HTMLVideoElement>('#video')!;
+const guide = document.querySelector<HTMLDivElement>('#guide')!;
+const cameraHint = document.querySelector<HTMLParagraphElement>('#camera-hint')!;
+const cameraBtn = document.querySelector<HTMLButtonElement>('#camera-btn')!;
+const scanBtn = document.querySelector<HTMLButtonElement>('#scan-btn')!;
+const searchForm = document.querySelector<HTMLFormElement>('#search')!;
+const nameInput = document.querySelector<HTMLInputElement>('#name-input')!;
+const numberInput = document.querySelector<HTMLInputElement>('#number-input')!;
+const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
+const resultsEl = document.querySelector<HTMLUListElement>('#results')!;
+const detailEl = document.querySelector<HTMLElement>('#detail')!;
+
+// The active camera stream, or null while the camera is off
+let stream: MediaStream | null = null;
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+
+function setStatus(message: string): void {
+  statusEl.textContent = message;
+}
+
+// Make text safe to put inside innerHTML: turns "<" into "&lt;" and so on,
+// so a card name can never be interpreted as HTML
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Turn what the user typed in the Number box into a CardNumber:
+// "136/189" -> { local: "136", total: 189 },  "25" -> { local: "25" },  "" -> undefined
+function parseNumberInput(value: string): CardNumber | undefined {
+  const [local, total] = value.split('/').map((part) => part.trim());
+  if (!local) return undefined;
+  const totalNumber = Number(total);
+  return { local, total: total && !Number.isNaN(totalNumber) ? totalNumber : undefined };
+}
+
+// ---------------------------------------------------------------------------
+// Buttons
+// ---------------------------------------------------------------------------
+
+// "Start camera" / "Stop camera" toggle
+cameraBtn.addEventListener('click', async () => {
+  // Camera is on -> turn it off and reset the UI
+  if (stream) {
+    stopCamera(stream);
+    stream = null;
+    video.srcObject = null;
+    cameraBtn.textContent = 'Start camera';
+    scanBtn.disabled = true;
+    cameraHint.hidden = false;
+    return;
+  }
+  // Camera is off -> turn it on
+  try {
+    stream = await startCamera(video);
+    cameraBtn.textContent = 'Stop camera';
+    scanBtn.disabled = false;
+    cameraHint.hidden = true;
+    // Start downloading the OCR model now, while the user lines up the card
+    warmUpOcr();
+  } catch (error) {
+    // Usually: permission denied, no camera, or the page isn't on HTTPS
+    setStatus(`Couldn't open the camera: ${(error as Error).message}`);
+  }
+});
+
+// "Scan card": capture -> read text -> search
+scanBtn.addEventListener('click', async () => {
+  // Disable the button so a double-tap can't start two scans at once
+  scanBtn.disabled = true;
+  try {
+    setStatus('Reading card…');
+    const result = await scanCard(captureGuide(video, guide));
+    // Open the browser dev tools console to see what OCR actually read
+    console.debug('OCR header:', result.rawName, '| footer:', result.rawNumber);
+
+    // Put what we read into the search boxes so the user can see and fix it
+    nameInput.value = result.name;
+    numberInput.value = result.number
+      ? `${result.number.local}${result.number.total !== undefined ? `/${result.number.total}` : ''}`
+      : '';
+
+    if (!result.name) {
+      setStatus("Couldn't read the card name. Hold the card flat inside the frame, or type it below.");
+      return;
+    }
+    await search(result.name, result.number);
+  } catch (error) {
+    setStatus(`Scan failed: ${(error as Error).message}`);
+  } finally {
+    // Re-enable the button, unless the camera was turned off mid-scan
+    scanBtn.disabled = !stream;
+  }
+});
+
+// Manual "Search" button (also used after correcting a bad scan)
+searchForm.addEventListener('submit', async (event) => {
+  // Stop the browser from reloading the page, which is what forms do by default
+  event.preventDefault();
+  const name = nameInput.value.trim();
+  if (!name) {
+    setStatus('Enter a card name to search.');
+    return;
+  }
+  await search(name, parseNumberInput(numberInput.value));
+});
+
+// ---------------------------------------------------------------------------
+// Searching and showing results
+// ---------------------------------------------------------------------------
+
+// Look up a card and decide what to show:
+//   no matches -> a message, one match -> its details, several -> a grid to pick from
+async function search(name: string, number?: CardNumber): Promise<void> {
+  setStatus(`Searching for “${name}”${number ? ` #${number.local}` : ''}…`);
+  // Clear out the previous search's results
+  resultsEl.innerHTML = '';
+  detailEl.hidden = true;
+
+  try {
+    const cards = await findCards(name, number);
+    if (cards.length === 0) {
+      setStatus(`No cards found for “${name}”.`);
+      return;
+    }
+    if (cards.length === 1) {
+      setStatus('Found it.');
+      await showCard(cards[0].id);
+      return;
+    }
+    setStatus(`${cards.length} possible matches. Pick yours:`);
+    renderResults(cards);
+  } catch (error) {
+    // Usually a network problem reaching the TCGdex API
+    setStatus(`Search failed: ${(error as Error).message}`);
+  }
+}
+
+// Draw the grid of candidate cards; clicking one opens its details
+function renderResults(cards: CardResumeModel[]): void {
+  resultsEl.innerHTML = '';
+  // Show at most 60 so a broad search like "Pikachu" doesn't load hundreds of images
+  for (const card of cards.slice(0, 60)) {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'result';
+    // Some cards in the database have no image; show a placeholder for those.
+    // 'low' quality keeps the grid fast; loading="lazy" loads images only when scrolled into view.
+    button.innerHTML = card.image
+      ? `<img src="${card.getImageURL('low', 'webp')}" alt="" loading="lazy" />`
+      : `<div class="no-image">No image</div>`;
+    button.insertAdjacentHTML('beforeend', `<span>${escapeHtml(card.name)}<small>${escapeHtml(card.id)}</small></span>`);
+    button.addEventListener('click', () => showCard(card.id));
+    item.append(button);
+    resultsEl.append(item);
+  }
+}
+
+// Format a price like "0.04 EUR", or "—" when the value is missing
+function formatPrice(value: unknown, unit: string): string {
+  return typeof value === 'number' ? `${value.toFixed(2)} ${unit}` : '—';
+}
+
+// Build the prices table from whichever markets have data for this card
+function renderPricing(card: PricedCard): string {
+  const rows: string[] = [];
+
+  const cardmarket = card.pricing?.cardmarket;
+  if (cardmarket) {
+    rows.push(`<tr><th>Cardmarket trend</th><td>${formatPrice(cardmarket.trend, cardmarket.unit)}</td></tr>`);
+    rows.push(`<tr><th>Cardmarket low</th><td>${formatPrice(cardmarket.low, cardmarket.unit)}</td></tr>`);
+    // Only some cards have a separate holo price
+    if (cardmarket['trend-holo'] !== undefined) {
+      rows.push(`<tr><th>Cardmarket trend (holo)</th><td>${formatPrice(cardmarket['trend-holo'], cardmarket.unit)}</td></tr>`);
+    }
+  }
+
+  // TCGplayer groups prices by variant (normal, holofoil, reverseHolofoil, ...);
+  // show the market price for each one
+  const tcgplayer = card.pricing?.tcgplayer;
+  if (tcgplayer) {
+    for (const [variant, prices] of Object.entries(tcgplayer)) {
+      // Skip non-variant fields such as "unit" and "updated"
+      if (typeof prices !== 'object' || prices === null) continue;
+      const market = (prices as { marketPrice?: number }).marketPrice;
+      rows.push(`<tr><th>TCGplayer ${escapeHtml(variant)}</th><td>${formatPrice(market, tcgplayer.unit)}</td></tr>`);
+    }
+  }
+
+  return rows.length > 0 ? `<table class="prices">${rows.join('')}</table>` : '<p class="muted">No price data.</p>';
+}
+
+// Fetch the full card and show its image, details and prices
+async function showCard(id: string): Promise<void> {
+  const card = await getCard(id);
+  if (!card) {
+    setStatus(`Card ${id} not found.`);
+    return;
+  }
+
+  // [label, value] pairs for the details list. Not every card has every field
+  // (a Trainer card has no HP), so empty ones are filtered out.
+  const details = [
+    ['Set', `${card.set.name} · ${card.localId}${card.set.cardCount?.official ? `/${card.set.cardCount.official}` : ''}`],
+    ['Rarity', card.rarity],
+    ['Category', card.category],
+    ['HP', card.hp],
+    ['Types', card.types?.join(', ')],
+    ['Illustrator', card.illustrator],
+  ].filter(([, value]) => value !== undefined && value !== '');
+
+  detailEl.innerHTML = `
+    ${card.image ? `<img src="${card.getImageURL('high', 'webp')}" alt="${escapeHtml(card.name)}" />` : ''}
+    <div>
+      <h2>${escapeHtml(card.name)}</h2>
+      <dl>${details.map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}</dl>
+      <h3>Prices</h3>
+      ${renderPricing(card)}
+    </div>
+  `;
+  detailEl.hidden = false;
+  // Scroll down to the card so it's visible on phones
+  detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
