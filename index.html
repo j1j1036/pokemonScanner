@@ -9,10 +9,36 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <title>Pokémon Scanner</title>
+    <link rel="stylesheet" href="/src/home/style.css" />
+    <title>My Projects</title>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <main class="home">
+      <header>
+        <h1>My own projects</h1>
+        <p class="tagline">Little things I’ve built. Pick one to try it out.</p>
+      </header>
+
+      <!-- One <li> per project. Copy the first one to add another. -->
+      <ul class="projects">
+        <li>
+          <a class="project" href="/scanner/">
+            <img src="/mimikyu.png" alt="" />
+            <div>
+              <h2>Pokémon Scanner</h2>
+              <p>Point your camera at a card to find out what it is and what it’s worth.</p>
+            </div>
+          </a>
+        </li>
+        <li>
+          <div class="project soon">
+            <div>
+              <h2>Next project</h2>
+              <p>Coming soon.</p>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </main>
   </body>
 </html>

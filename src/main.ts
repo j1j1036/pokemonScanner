@@ -26,6 +26,7 @@ import type { SavedCard } from './collection/store';
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
+  <a class="back" href="/">← My projects</a>
   <header class="top">
     <img class="logo" src="/mimikyu.png" alt="" />
     <div>

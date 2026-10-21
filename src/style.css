@@ -72,6 +72,19 @@ canvas {
 /* ---------------------------------------------------------------------------
    Header
    --------------------------------------------------------------------------- */
+/* Link back to the homepage's project list */
+.back {
+  display: inline-block;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.back:hover {
+  color: var(--accent);
+}
+
 .top {
   display: flex;
   align-items: center;
