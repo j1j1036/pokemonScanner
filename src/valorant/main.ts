@@ -8,6 +8,9 @@
  *   this file    -> show everything else
  *
  * The featured store is the same for everyone, so it loads once, on page open.
+ * The player's own daily shop needs their Riot login, so it loads only when
+ * they paste in the link from Riot's login page. That panel is only for the
+ * site owner: it appears after opening the page once with #key=<SHOP_OWNER_KEY>.
  */
 import './style.css';
 import {
@@ -22,10 +25,13 @@ import {
   getMatches,
   getMmr,
   getMmrHistory,
+  getMyShop,
   getTitleText,
+  parseLoginLink,
   rankIcon,
+  RIOT_LOGIN_URL,
 } from './api';
-import type { Account, Bundle, Match, Mmr, MmrChange, Platform } from './api';
+import type { Account, Bundle, Match, Mmr, MmrChange, Platform, ShopItem } from './api';
 import { renderRrChart, signed } from './chart';
 
 // ---------------------------------------------------------------------------
@@ -90,10 +96,32 @@ app.innerHTML = `
   <section class="panel">
     <h2>Store</h2>
     <p class="sub">
-      The featured bundle, which is the same for every player. A player’s personal daily
-      shop and Night Market need their own Riot login, so they can’t be shown here.
+      The featured bundle, which is the same for every player.
     </p>
     <div id="store" class="store"><p class="muted">Loading the store…</p></div>
+  </section>
+
+  <section id="my-shop-panel" class="panel" hidden>
+    <h2>My shop</h2>
+    <p class="sub">
+      Your own daily offers and Night Market. These need your Riot login, so you log in on
+      Riot’s page and paste the link it ends on here. The login lasts about an hour and
+      isn’t saved anywhere.
+    </p>
+    <ol class="steps">
+      <li><a href="${RIOT_LOGIN_URL}" target="_blank" rel="noopener">Log in with Riot</a> (opens Riot’s login page).</li>
+      <li>You’ll land on playvalorant.com. Copy the whole address from the address bar.</li>
+      <li>Paste it below.</li>
+    </ol>
+    <form id="shop-form" class="search">
+      <label class="riot-id">Link from the address bar
+        <input id="shop-link" name="link" type="password" placeholder="https://playvalorant.com/opt_in#access_token=…"
+          autocomplete="off" spellcheck="false" required />
+      </label>
+      <button type="submit">Show my shop</button>
+    </form>
+    <p id="shop-status" class="status" role="status"></p>
+    <div id="my-shop" class="store"></div>
   </section>
 
   <footer class="credits">
@@ -118,6 +146,11 @@ const rrTable = document.querySelector<HTMLDetailsElement>('#rr-table')!;
 const summaryEl = document.querySelector<HTMLDivElement>('#match-summary')!;
 const matchesEl = document.querySelector<HTMLUListElement>('#matches')!;
 const storeEl = document.querySelector<HTMLDivElement>('#store')!;
+const myShopPanel = document.querySelector<HTMLElement>('#my-shop-panel')!;
+const shopForm = document.querySelector<HTMLFormElement>('#shop-form')!;
+const shopLinkInput = document.querySelector<HTMLInputElement>('#shop-link')!;
+const shopStatusEl = document.querySelector<HTMLParagraphElement>('#shop-status')!;
+const myShopEl = document.querySelector<HTMLDivElement>('#my-shop')!;
 
 // Counts lookups, so a slow answer for an older lookup can't overwrite a newer one
 let currentLookup = 0;
@@ -202,6 +235,9 @@ function timeLeft(seconds: number): string {
   const minutes = Math.floor((seconds % 3_600) / 60);
   return days > 0 ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
 }
+
+// A price in Valorant Points, with the VP icon
+const vp = (amount: number) => `<span class="vp"><img src="${VP_ICON}" alt="" />${amount.toLocaleString('en')}</span>`;
 
 // CSS class for a gain (green) or loss (red)
 const changeClass = (value: number) => (value > 0 ? 'up' : value < 0 ? 'down' : '');
@@ -551,7 +587,6 @@ async function loadStore(): Promise<void> {
     })),
   );
 
-  const vp = (amount: number) => `<span class="vp"><img src="${VP_ICON}" alt="" />${amount.toLocaleString('en')}</span>`;
   storeEl.innerHTML = details
     .map(({ bundle, info, items }) => {
       const price = bundle.Items.reduce((total, entry) => total + entry.DiscountedPrice, 0);
@@ -580,6 +615,96 @@ async function loadStore(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// The player's own shop
+// ---------------------------------------------------------------------------
+
+const OWNER_KEY = 'valorant-owner-key';
+
+// Opening the page with #key=… remembers the owner key in this browser
+// (#key= with nothing after it forgets it). The part after # is never sent to
+// any server, so the key doesn't end up in logs. Returns the key, if any.
+function setUpOwnerKey(): string | null {
+  const fromLink = new URLSearchParams(location.hash.slice(1)).get('key');
+  if (fromLink !== null) {
+    try {
+      if (fromLink) localStorage.setItem(OWNER_KEY, fromLink);
+      else localStorage.removeItem(OWNER_KEY);
+    } catch {
+      // Not saved; it still works for this visit
+    }
+    // Take the key out of the address bar so it isn't shared by accident
+    history.replaceState(null, '', location.pathname + location.search);
+    return fromLink || null;
+  }
+  try {
+    return localStorage.getItem(OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+const ownerKey = setUpOwnerKey();
+myShopPanel.hidden = !ownerKey;
+
+async function loadMyShop(link: string): Promise<void> {
+  const tokens = parseLoginLink(link);
+  if (!tokens) {
+    shopStatusEl.textContent = 'That link has no login in it. Copy the whole address after logging in, including everything after the #.';
+    return;
+  }
+
+  shopStatusEl.textContent = 'Loading your shop…';
+  myShopEl.replaceChildren();
+  let shop;
+  try {
+    shop = await getMyShop(tokens, ownerKey!);
+  } catch (error) {
+    shopStatusEl.textContent = errorMessage(error, "The server didn't accept your owner key. Open the page with #key= and the right key.");
+    return;
+  }
+
+  // Names and pictures come from valorant-api.com, like in the featured store
+  const withInfo = (items: ShopItem[]) =>
+    Promise.all(items.map(async (item) => ({ item, info: await getItemInfo(item.itemTypeId, item.itemId).catch(() => null) })));
+  const [daily, nightMarket] = await Promise.all([withInfo(shop.daily.items), withInfo(shop.nightMarket?.items ?? [])]);
+
+  const list = (entries: Awaited<ReturnType<typeof withInfo>>) =>
+    `<ul class="items">${entries
+      .map(
+        ({ item, info }) => `<li>
+          ${info?.icon ? `<img class="item-icon" src="${escapeHtml(info.icon)}" alt="" />` : '<span class="item-icon"></span>'}
+          <p>${escapeHtml(info?.name ?? 'Unknown item')}</p>
+          <p class="muted">${vp(item.price)}${
+            item.discountPercent ? ` <s>${item.basePrice.toLocaleString('en')}</s> −${item.discountPercent}%` : ''
+          }</p>
+        </li>`,
+      )
+      .join('')}</ul>`;
+
+  shopStatusEl.textContent = '';
+  myShopEl.innerHTML = `
+    <article>
+      <div class="bundle-head">
+        <h3>Daily offers</h3>
+        <p class="muted">New offers in ${timeLeft(shop.daily.secondsLeft)}</p>
+      </div>
+      ${list(daily)}
+    </article>
+    ${
+      shop.nightMarket
+        ? `<article>
+            <div class="bundle-head">
+              <h3>Night Market</h3>
+              <p class="muted">Closes in ${timeLeft(shop.nightMarket.secondsLeft)}</p>
+            </div>
+            ${list(nightMarket)}
+          </article>`
+        : ''
+    }
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 
@@ -587,6 +712,14 @@ searchForm.addEventListener('submit', (event) => {
   // Stop the browser from reloading the page on submit
   event.preventDefault();
   void lookUp(riotIdInput.value.trim(), platformSelect.value as Platform);
+});
+
+shopForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const link = shopLinkInput.value;
+  // Don't leave the login sitting in the page once it's been used
+  shopLinkInput.value = '';
+  void loadMyShop(link);
 });
 
 renderRecent();

@@ -5,7 +5,9 @@
  * from the HenrikDev API, through our own /api/valorant proxy that adds the API
  * key (see netlify/functions/valorant.ts). Pictures and display names (rank icons,
  * agents, skins, titles) come straight from valorant-api.com, which needs no key.
+ * A player's own daily shop comes from Riot, through /api/valorant-shop.
  */
+import type { Shop } from '../../netlify/functions/valorant-shop';
 
 export type Platform = 'pc' | 'console';
 
@@ -149,6 +151,47 @@ export function getMatches(account: Account, platform: Platform, size = 10): Pro
 export async function getFeaturedBundles(): Promise<Bundle[]> {
   const data = await henrik<{ FeaturedBundle: { Bundles: Bundle[] } }>('v1/store-featured');
   return data.FeaturedBundle.Bundles;
+}
+
+// ---------------------------------------------------------------------------
+// The player's own shop (through /api/valorant-shop, see netlify/functions/valorant-shop.ts)
+// ---------------------------------------------------------------------------
+
+export type { Shop, ShopItem } from '../../netlify/functions/valorant-shop';
+
+// Riot's own login page. After logging in it sends the player to playvalorant.com
+// with the login tokens in the address (after the #), which they copy back to us.
+// This is the same login the Valorant website uses, so we never see the password.
+export const RIOT_LOGIN_URL =
+  'https://auth.riotgames.com/authorize?' +
+  new URLSearchParams({
+    redirect_uri: 'https://playvalorant.com/opt_in',
+    client_id: 'play-valorant-web-prod',
+    response_type: 'token id_token',
+    nonce: '1',
+    scope: 'account openid',
+  });
+
+// The pasted address -> its two tokens, or null if they aren't in it
+export function parseLoginLink(text: string): { accessToken: string; idToken: string } | null {
+  const hash = text.trim().split('#')[1];
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get('access_token');
+  const idToken = params.get('id_token');
+  return accessToken && idToken ? { accessToken, idToken } : null;
+}
+
+// ownerKey: the site owner's secret (SHOP_OWNER_KEY); the server refuses anyone else
+export async function getMyShop(tokens: { accessToken: string; idToken: string }, ownerKey: string): Promise<Shop> {
+  const response = await fetch('/api/valorant-shop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Owner-Key': ownerKey },
+    body: JSON.stringify(tokens),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new ApiError(body?.errors?.[0]?.message ?? `Request failed (${response.status})`, response.status);
+  return body as Shop;
 }
 
 // ---------------------------------------------------------------------------

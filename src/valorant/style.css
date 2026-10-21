@@ -665,3 +665,28 @@ span.item-icon {
 .credits a {
   color: inherit;
 }
+
+/* "My shop": the log-in steps */
+.steps {
+  margin: 0;
+  padding-left: 1.3em;
+  display: grid;
+  gap: 4px;
+}
+
+.steps a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#shop-form {
+  margin-top: 14px;
+}
+
+#my-shop .bundle-head {
+  align-items: baseline;
+}
+
+#my-shop s {
+  margin-left: 4px;
+}

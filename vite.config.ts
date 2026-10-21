@@ -2,14 +2,31 @@ import { resolve } from 'node:path';
 import { defineConfig, loadEnv } from 'vite';
 import type { Connect, Plugin } from 'vite';
 import { proxyValorant } from './netlify/functions/valorant';
+import { fetchShop } from './netlify/functions/valorant-shop';
 
-// On Netlify, /api/valorant/... is answered by netlify/functions/valorant.ts.
-// This makes `npm run dev` and `npm run preview` answer it the same way,
-// using the API key from the .env file.
-function valorantApi(apiKey: string | undefined): Plugin {
+// Collect the body of a POST request (Node hands it over in pieces)
+async function readBody(req: Connect.IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString();
+}
+
+// On Netlify, /api/valorant/... and /api/valorant-shop are answered by the
+// functions in netlify/functions/. This makes `npm run dev` and `npm run preview`
+// answer them the same way, using the keys from the .env file.
+function valorantApi(apiKey: string | undefined, shopOwnerKey: string | undefined): Plugin {
   const middleware: Connect.NextHandleFunction = async (req, res, next) => {
-    if (!req.url?.startsWith('/api/valorant/')) return next();
-    const response = await proxyValorant(new Request(`http://localhost${req.url}`, { method: req.method }), apiKey);
+    let response: Response;
+    if (req.url?.startsWith('/api/valorant/')) {
+      response = await proxyValorant(new Request(`http://localhost${req.url}`, { method: req.method }), apiKey);
+    } else if (req.url === '/api/valorant-shop') {
+      const body = req.method === 'POST' ? await readBody(req) : undefined;
+      const ownerKey = req.headers['x-owner-key'];
+      const headers = typeof ownerKey === 'string' ? { 'X-Owner-Key': ownerKey } : undefined;
+      response = await fetchShop(new Request(`http://localhost${req.url}`, { method: req.method, headers, body }), shopOwnerKey);
+    } else {
+      return next();
+    }
     res.statusCode = response.status;
     response.headers.forEach((value, key) => res.setHeader(key, value));
     res.end(await response.text());
@@ -28,7 +45,7 @@ export default defineConfig(({ mode }) => {
   // server side: only VITE_ variables are ever put into the page.
   const env = loadEnv(mode, import.meta.dirname, '');
   return {
-    plugins: [valorantApi(env.HENRIK_API_KEY)],
+    plugins: [valorantApi(env.HENRIK_API_KEY, env.SHOP_OWNER_KEY)],
     build: {
       rolldownOptions: {
         input: {
