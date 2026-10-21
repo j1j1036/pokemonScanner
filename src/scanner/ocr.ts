@@ -24,6 +24,11 @@ export interface ScanResult {
 // Words printed in the card header that are never part of the name
 const HEADER_NOISE = new Set(['BASIC', 'STAGE', 'STAGE1', 'STAGE2', 'HP', 'EVOLVES', 'FROM', 'PUT', 'ON', 'THE', 'TRAINER', 'ITEM', 'SUPPORTER', 'STADIUM', 'ENERGY']);
 
+// Every card is resized to this width before reading. Live-camera frames are small
+// and camera-app photos can be 4000px+ wide; a fixed size keeps text a predictable
+// size for tesseract and stops huge photos from making the scan slow.
+const CARD_WIDTH = 1000;
+
 // Tesseract runs in a background "worker". Creating it downloads the English
 // language data (~10 MB), so we create it only once and reuse it for every scan.
 let workerPromise: Promise<Worker> | null = null;
@@ -37,6 +42,15 @@ function getWorker(): Promise<Worker> {
 /** Start downloading the OCR model early so the first scan is faster. */
 export function warmUpOcr(): void {
   void getWorker();
+}
+
+// Resize the captured card to CARD_WIDTH, keeping its shape
+function normalizeSize(card: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement('canvas');
+  out.width = CARD_WIDTH;
+  out.height = Math.round((card.height * CARD_WIDTH) / card.width);
+  out.getContext('2d')!.drawImage(card, 0, 0, out.width, out.height);
+  return out;
 }
 
 // Crop a fraction of the card, upscale and convert to high-contrast greyscale.
@@ -109,14 +123,18 @@ function parseNumber(text: string): CardNumber | undefined {
   // Pattern: optional letter prefix + 1–3 digits, a slash, then the same again
   const match = fixed.match(/([A-Z]{0,3}\d{1,3})\s*\/\s*([A-Z]{0,3}\d{1,3})/i);
   if (!match) return undefined;
+  // A letter prefix is only real when the total has one too ("TG05/TG30", "GG12/GG70").
+  // Otherwise it's nearby text OCR glued onto the number ("EN136/189" -> "136").
+  const local = /^[A-Z]/i.test(match[2]) ? match[1] : match[1].replace(/^[A-Z]+/i, '');
   // The total is the set size; keep only its digits ("TG30" -> 30)
   const total = Number(match[2].replace(/\D/g, ''));
-  return { local: match[1], total: Number.isNaN(total) ? undefined : total };
+  return { local, total: Number.isNaN(total) ? undefined : total };
 }
 
 // Read the name and number from a captured card image
-export async function scanCard(card: HTMLCanvasElement): Promise<ScanResult> {
+export async function scanCard(captured: HTMLCanvasElement): Promise<ScanResult> {
   const worker = await getWorker();
+  const card = normalizeSize(captured);
 
   // Pass 1: the header (top 13% of the card).
   // SPARSE_TEXT tells tesseract the text is scattered rather than in paragraphs.

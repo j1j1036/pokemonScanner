@@ -6,6 +6,8 @@
  *   ocr.ts                   -> read the name and number off that picture
  *   scannerInicializer.ts    -> look those up in the TCGdex database
  *   this file                -> show the matches / the card's details
+ *
+ * Saved cards live in collection/store.ts (a Zustand store kept in localStorage).
  */
 import './style.css';
 import { findCards, getCard } from './pokemon/scannerInicializer';
@@ -13,6 +15,8 @@ import type { CardNumber, PricedCard } from './pokemon/scannerInicializer';
 import type { CardResumeModel } from '@tcgdex/sdk';
 import { captureGuide, showPhoto, startCamera, stopCamera } from './scanner/camera';
 import { scanCard, warmUpOcr } from './scanner/ocr';
+import { collection, ownedCount } from './collection/store';
+import type { SavedCard } from './collection/store';
 
 // ---------------------------------------------------------------------------
 // Page layout
@@ -23,7 +27,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
   <header class="top">
-    <img class="logo" src="/mimikyu.svg" alt="" />
+    <img class="logo" src="/mimikyu.png" alt="" />
     <div>
       <h1>Pokémon Scanner</h1>
       <p class="tagline">Show me a card and I’ll tell you what it’s worth ✨</p>
@@ -66,6 +70,16 @@ app.innerHTML = `
   <ul id="results" class="results"></ul>
   <article id="detail" class="detail" hidden></article>
 
+  <!-- Saved cards; drawn by renderCollection() whenever the store changes -->
+  <section class="collection">
+    <div class="collection-head">
+      <h2>My collection</h2>
+      <span id="collection-total" class="collection-total"></span>
+    </div>
+    <p id="collection-empty" class="muted">No cards saved yet. Scan one and tap “Save to collection” 💛</p>
+    <ul id="collection" class="results"></ul>
+  </section>
+
   <footer class="credits">
     Unofficial fan project. Not affiliated with Nintendo, Game Freak or The Pokémon Company.
     Card data from <a href="https://tcgdex.dev" target="_blank" rel="noopener">TCGdex</a>.
@@ -88,6 +102,9 @@ const numberInput = document.querySelector<HTMLInputElement>('#number-input')!;
 const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
 const resultsEl = document.querySelector<HTMLUListElement>('#results')!;
 const detailEl = document.querySelector<HTMLElement>('#detail')!;
+const collectionEl = document.querySelector<HTMLUListElement>('#collection')!;
+const collectionEmpty = document.querySelector<HTMLParagraphElement>('#collection-empty')!;
+const collectionTotal = document.querySelector<HTMLSpanElement>('#collection-total')!;
 
 // The active camera stream, or null while the camera is off
 let stream: MediaStream | null = null;
@@ -309,6 +326,25 @@ function renderPricing(card: PricedCard): string {
   return rows.length > 0 ? `<table class="prices">${rows.join('')}</table>` : '<p class="muted">No price data.</p>';
 }
 
+// The one price shown in the collection: Cardmarket trend if there is one,
+// otherwise the first TCGplayer market price
+function headlinePrice(card: PricedCard): SavedCard['price'] {
+  const cardmarket = card.pricing?.cardmarket;
+  if (typeof cardmarket?.trend === 'number') return { value: cardmarket.trend, unit: cardmarket.unit };
+  const tcgplayer = card.pricing?.tcgplayer;
+  for (const prices of Object.values(tcgplayer ?? {})) {
+    const market = (prices as { marketPrice?: unknown } | null)?.marketPrice;
+    if (typeof market === 'number') return { value: market, unit: tcgplayer!.unit };
+  }
+  return undefined;
+}
+
+// Text for the save button, e.g. "Save to collection" or "Add another (you have 2)"
+function saveLabel(id: string): string {
+  const owned = ownedCount(id);
+  return owned === 0 ? '💛 Save to collection' : `💛 Add another (you have ${owned})`;
+}
+
 // Fetch the full card and show its image, details and prices
 async function showCard(id: string): Promise<void> {
   const card = await getCard(id);
@@ -332,12 +368,95 @@ async function showCard(id: string): Promise<void> {
     ${card.image ? `<img src="${escapeHtml(card.getImageURL('high', 'webp'))}" alt="${escapeHtml(card.name)}" />` : ''}
     <div>
       <h2>${escapeHtml(card.name)}</h2>
+      <button id="save-btn" type="button" class="primary save-btn" data-id="${escapeHtml(card.id)}">${saveLabel(card.id)}</button>
       <dl>${details.map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}</dl>
       <h3>Prices</h3>
       ${renderPricing(card)}
     </div>
   `;
   detailEl.hidden = false;
+
+  // The button only exists now that the details were drawn, so wire it up here
+  const saveBtn = detailEl.querySelector<HTMLButtonElement>('#save-btn')!;
+  saveBtn.addEventListener('click', () => {
+    collection.getState().add({
+      id: card.id,
+      name: card.name,
+      setName: card.set.name,
+      number: `${card.localId}${card.set.cardCount?.official ? `/${card.set.cardCount.official}` : ''}`,
+      image: card.image ? card.getImageURL('low', 'webp') : undefined,
+      price: headlinePrice(card),
+    });
+    // renderCollection() runs after every change and updates this button's text
+  });
   // Scroll down to the card so it's visible on phones
   detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+// ---------------------------------------------------------------------------
+// My collection
+// ---------------------------------------------------------------------------
+
+// Draw the saved cards and their total value
+function renderCollection(): void {
+  const { cards, removeOne } = collection.getState();
+  collectionEmpty.hidden = cards.length > 0;
+  collectionEl.innerHTML = '';
+
+  for (const saved of cards) {
+    const item = document.createElement('li');
+    item.className = 'saved';
+
+    // Clicking the card opens its details with fresh prices
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'result';
+    open.innerHTML = saved.image
+      ? `<img src="${escapeHtml(saved.image)}" alt="" loading="lazy" />`
+      : `<div class="no-image">No image</div>`;
+    open.insertAdjacentHTML(
+      'beforeend',
+      `<span>${escapeHtml(saved.name)}<small>${escapeHtml(saved.setName)} · ${escapeHtml(saved.number)}</small>` +
+        `<small class="saved-price">${saved.price ? formatPrice(saved.price.value, saved.price.unit) : 'No price'}</small></span>`,
+    );
+    open.addEventListener('click', () => showCard(saved.id));
+
+    // Little "×2" badge when the user owns more than one copy
+    if (saved.count > 1) {
+      open.insertAdjacentHTML('afterbegin', `<b class="count-badge">×${saved.count}</b>`);
+    }
+
+    // Remove one copy
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'remove-btn';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `Remove one ${saved.name}`);
+    remove.addEventListener('click', () => removeOne(saved.id));
+
+    item.append(open, remove);
+    collectionEl.append(item);
+  }
+
+  // Total value, per currency (Cardmarket prices are EUR, TCGplayer USD)
+  const totals = new Map<string, number>();
+  for (const saved of cards) {
+    if (!saved.price) continue;
+    totals.set(saved.price.unit, (totals.get(saved.price.unit) ?? 0) + saved.price.value * saved.count);
+  }
+  const copies = cards.reduce((sum, saved) => sum + saved.count, 0);
+  collectionTotal.textContent =
+    copies === 0
+      ? ''
+      : `${copies} card${copies === 1 ? '' : 's'}` +
+        [...totals].map(([unit, total]) => ` · ${total.toFixed(2)} ${unit}`).join('');
+
+  // Keep the save button's "you have N" text in sync after a removal
+  const saveBtn = detailEl.querySelector<HTMLButtonElement>('#save-btn');
+  const shownId = saveBtn?.dataset.id;
+  if (saveBtn && shownId) saveBtn.textContent = saveLabel(shownId);
+}
+
+// Re-draw whenever the collection changes, and once now for the saved cards
+collection.subscribe(renderCollection);
+renderCollection();
