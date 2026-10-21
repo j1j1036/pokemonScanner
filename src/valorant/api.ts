@@ -58,6 +58,9 @@ export interface MmrChange {
 
 export interface MatchPlayer {
   puuid: string;
+  name: string;
+  tag: string;
+  tier: Tier;
   team_id: string;
   agent: { id: string; name: string };
   stats: {
@@ -82,7 +85,22 @@ export interface Match {
   players: MatchPlayer[];
   // Empty in free-for-all modes like Deathmatch
   teams: { team_id: string; won: boolean; rounds: { won: number; lost: number } }[];
-  rounds: unknown[];
+  rounds: Round[];
+}
+
+// Deathmatch is every player for themselves, even though the API gives each player a "team"
+export const isFreeForAll = (match: Match) => match.metadata.queue.id === 'deathmatch';
+
+// One round of a match
+export interface Round {
+  id: number;
+  result: string; // Elimination, Bomb detonated, Bomb defused, Round timer expired, Surrendered
+  winning_team: string;
+  first_blood?: { puuid: string } | null;
+  stats: {
+    player: { puuid: string; team: string };
+    economy: { loadout_value: number; weapon: { name: string } | null; armor: { name: string } | null } | null;
+  }[];
 }
 
 // A bundle in the featured store. Prices are in Valorant Points (VP).
@@ -267,3 +285,283 @@ export async function getItemInfo(itemTypeId: string, itemId: string): Promise<I
   const item = await valorantApi<{ displayName: string; displayIcon?: string | null }>(`${type.path}/${itemId}`);
   return { name: item.displayName, icon: item.displayIcon ?? null, kind: type.label };
 }
+
+// Everything below is the same for every visitor, so each list is fetched once
+// per page visit and shared (the promise is kept, not the result)
+function once<T>(load: () => Promise<T>): () => Promise<T> {
+  let promise: Promise<T> | undefined;
+  return () => {
+    promise ??= load().catch((error) => {
+      promise = undefined; // let the next caller try again
+      throw error;
+    });
+    return promise;
+  };
+}
+
+// IDs come in different upper/lower case from different APIs
+const key = (id: string) => id.toLowerCase();
+
+export interface Rarity {
+  name: string; // Select, Deluxe, Premium, Exclusive, Ultra
+  color: string; // CSS color
+  icon: string;
+}
+
+export interface Chroma {
+  uuid: string;
+  displayName: string;
+  displayIcon: string | null;
+  fullRender: string | null;
+  swatch: string | null;
+  streamedVideo: string | null;
+}
+
+export interface Skin {
+  uuid: string;
+  displayName: string;
+  displayIcon: string | null;
+  weaponId: string;
+  rarity: Rarity | null;
+  levels: { uuid: string; displayName: string; levelItem: string | null; streamedVideo: string | null }[];
+  chromas: Chroma[];
+}
+
+export interface Weapon {
+  uuid: string;
+  displayName: string;
+  category: string; // Rifle, Sidearm, SMG, …
+  displayIcon: string;
+}
+
+export interface Catalog {
+  weapons: Map<string, Weapon>;
+  skins: Map<string, Skin>;
+  skinByLevel: Map<string, Skin>;
+  skinByChroma: Map<string, Skin>;
+}
+
+// All weapons with all their skins: one big download (about 0.5 MB compressed),
+// so it's only loaded when something needs it
+export const getCatalog = once(async (): Promise<Catalog> => {
+  interface RawWeapon {
+    uuid: string;
+    displayName: string;
+    category: string;
+    displayIcon: string;
+    skins: (Omit<Skin, 'weaponId' | 'rarity'> & { contentTierUuid: string | null })[];
+  }
+  const [weapons, tiers] = await Promise.all([
+    valorantApi<RawWeapon[]>('weapons'),
+    valorantApi<{ uuid: string; devName: string; highlightColor: string; displayIcon: string }[]>('contenttiers'),
+  ]);
+  // highlightColor is RRGGBBAA with a faint alpha; use the solid color
+  const rarities = new Map(tiers.map((tier) => [key(tier.uuid), { name: tier.devName, color: `#${tier.highlightColor.slice(0, 6)}`, icon: tier.displayIcon }]));
+
+  const catalog: Catalog = { weapons: new Map(), skins: new Map(), skinByLevel: new Map(), skinByChroma: new Map() };
+  for (const weapon of weapons) {
+    catalog.weapons.set(key(weapon.uuid), {
+      uuid: weapon.uuid,
+      displayName: weapon.displayName,
+      category: weapon.category.replace('EEquippableCategory::', ''),
+      displayIcon: weapon.displayIcon,
+    });
+    for (const raw of weapon.skins) {
+      const skin: Skin = {
+        uuid: raw.uuid,
+        displayName: raw.displayName,
+        displayIcon: raw.displayIcon,
+        weaponId: weapon.uuid,
+        rarity: raw.contentTierUuid ? (rarities.get(key(raw.contentTierUuid)) ?? null) : null,
+        levels: raw.levels,
+        chromas: raw.chromas,
+      };
+      catalog.skins.set(key(skin.uuid), skin);
+      for (const level of skin.levels) catalog.skinByLevel.set(key(level.uuid), skin);
+      for (const chroma of skin.chromas) catalog.skinByChroma.set(key(chroma.uuid), skin);
+    }
+  }
+  return catalog;
+});
+
+export interface Agent {
+  name: string;
+  icon: string;
+  role: { name: string; icon: string } | null;
+}
+
+export const getAgents = once(async (): Promise<Map<string, Agent>> => {
+  const agents = await valorantApi<{ uuid: string; displayName: string; displayIcon: string; role: { displayName: string; displayIcon: string } | null }[]>(
+    'agents?isPlayableCharacter=true',
+  );
+  return new Map(
+    agents.map((agent) => [
+      key(agent.uuid),
+      { name: agent.displayName, icon: agent.displayIcon, role: agent.role && { name: agent.role.displayName, icon: agent.role.displayIcon } },
+    ]),
+  );
+});
+
+export interface GameMap {
+  name: string;
+  listViewIcon: string | null; // a wide strip of the map, good as a background
+  splash: string | null;
+}
+
+export const getMaps = once(async (): Promise<Map<string, GameMap>> => {
+  const maps = await valorantApi<({ uuid: string; displayName: string } & Omit<GameMap, 'name'>)[]>('maps');
+  return new Map(maps.map((map) => [key(map.uuid), { name: map.displayName, listViewIcon: map.listViewIcon, splash: map.splash }]));
+});
+
+export interface ContractDefinition {
+  name: string;
+  relationType: string | null; // "Season" for a battle pass, "Agent" for an agent's contract
+  relationUuid: string | null; // the act (for a battle pass) or agent
+  levelXp: number[]; // XP needed for each level, in order
+}
+
+export const getContractDefinitions = once(async (): Promise<Map<string, ContractDefinition>> => {
+  const contracts = await valorantApi<
+    { uuid: string; displayName: string; content: { relationType: string | null; relationUuid: string | null; chapters: { levels: { xp: number }[] }[] } }[]
+  >('contracts');
+  return new Map(
+    contracts.map((contract) => [
+      key(contract.uuid),
+      {
+        name: contract.displayName,
+        relationType: contract.content.relationType,
+        relationUuid: contract.content.relationUuid,
+        levelXp: contract.content.chapters.flatMap((chapter) => chapter.levels.map((level) => level.xp)),
+      },
+    ]),
+  );
+});
+
+export interface MissionDefinition {
+  title: string;
+  type: string; // Daily, Weekly, …
+  progressToComplete: number;
+  xpGrant: number;
+}
+
+export const getMissionDefinitions = once(async (): Promise<Map<string, MissionDefinition>> => {
+  const missions = await valorantApi<{ uuid: string; title: string | null; type: string | null; progressToComplete: number; xpGrant: number }[]>('missions');
+  return new Map(
+    missions.map((mission) => [
+      key(mission.uuid),
+      {
+        title: mission.title ?? 'Mission',
+        type: (mission.type ?? '').replace('EAresMissionType::', ''),
+        progressToComplete: mission.progressToComplete,
+        xpGrant: mission.xpGrant,
+      },
+    ]),
+  );
+});
+
+// The act that's on right now (its battle pass is the one to show)
+export const getCurrentAct = once(async (): Promise<{ uuid: string; parentUuid: string | null; name: string } | null> => {
+  const seasons = await valorantApi<{ uuid: string; displayName: string; type: string | null; startTime: string; endTime: string; parentUuid: string | null }[]>(
+    'seasons',
+  );
+  const now = Date.now();
+  const act = seasons.find(
+    (season) => season.type === 'EAresSeasonType::Act' && Date.parse(season.startTime) <= now && now < Date.parse(season.endTime),
+  );
+  return act ? { uuid: act.uuid, parentUuid: act.parentUuid, name: act.displayName } : null;
+});
+
+export const lookUpKey = key;
+
+export const KC_ICON = `${MEDIA}/currencies/85ca954a-41f2-ce94-9b45-8ca3dd39a00d/displayicon.png`;
+export const RADIANITE_ICON = `${MEDIA}/currencies/e59aa87c-4cbf-517a-5983-6e81511be9b7/displayicon.png`;
+export const cardSmall = (cardId: string) => `${MEDIA}/playercards/${cardId}/smallart.png`;
+export const cardTall = (cardId: string) => `${MEDIA}/playercards/${cardId}/largeart.png`;
+
+// ---------------------------------------------------------------------------
+// Around the game: server status, news, esports, leaderboard, crosshairs (HenrikDev)
+// ---------------------------------------------------------------------------
+
+export type Region = 'eu' | 'na' | 'ap' | 'kr' | 'latam' | 'br';
+
+interface Translation {
+  locale: string;
+  content: string;
+}
+
+export interface StatusEntry {
+  id: number;
+  incident_severity: string | null; // info, warning, critical
+  maintenance_status: string | null;
+  titles: Translation[];
+  updates: { translations: Translation[]; created_at: string }[];
+  created_at: string;
+}
+
+// Pick the English text, or whatever there is
+export const english = (translations: Translation[]) =>
+  (translations.find((t) => t.locale === 'en_US') ?? translations[0])?.content ?? '';
+
+export function getStatus(region: Region): Promise<{ maintenances: StatusEntry[]; incidents: StatusEntry[] }> {
+  return henrik(`v1/status/${region}`);
+}
+
+export interface NewsPost {
+  title: string;
+  banner_url: string | null;
+  category: string;
+  date: string;
+  url: string;
+  external_link: string | null;
+}
+
+export function getNews(): Promise<NewsPost[]> {
+  return henrik('v1/website/en-us');
+}
+
+export interface EsportsMatch {
+  date: string;
+  state: string; // unstarted, inProgress, completed
+  vod: string | null;
+  league: { name: string; icon: string | null; region: string | null };
+  tournament: { name: string };
+  match: {
+    game_type: { type: string | null; count: number | null };
+    teams: { name: string; code: string; icon: string | null; has_won: boolean; game_wins: number }[];
+  };
+}
+
+export function getEsportsSchedule(): Promise<EsportsMatch[]> {
+  return henrik('v1/esports/schedule');
+}
+
+export interface LeaderboardPlayer {
+  card: string;
+  is_anonymized: boolean;
+  name: string;
+  tag: string;
+  leaderboard_rank: number;
+  tier: number;
+  rr: number;
+  wins: number;
+}
+
+export interface Leaderboard {
+  thresholds: { tier: Tier; start_index: number; threshold: number }[];
+  players: LeaderboardPlayer[];
+}
+
+// start: how many players to skip. With a Riot ID, finds that player instead.
+export function getLeaderboard(region: Region, platform: Platform, start = 0, riotId?: { name: string; tag: string }): Promise<Leaderboard> {
+  const query = new URLSearchParams({ size: '25' });
+  if (riotId) {
+    query.set('name', riotId.name);
+    query.set('tag', riotId.tag);
+  } else {
+    query.set('start_index', String(start));
+  }
+  return henrik(`v3/leaderboard/${region}/${platform}?${query}`);
+}
+
+// A picture of a crosshair from its share code (Settings → Crosshair → Import Profile Code)
+export const crosshairImage = (code: string) => `/api/valorant/v1/crosshair/generate?id=${encodeURIComponent(code)}`;

@@ -29,7 +29,7 @@ function valorantApi(apiKey: string | undefined, shopOwnerKey: string | undefine
     }
     res.statusCode = response.status;
     response.headers.forEach((value, key) => res.setHeader(key, value));
-    res.end(await response.text());
+    res.end(Buffer.from(await response.arrayBuffer()));
   };
   return {
     name: 'valorant-api',

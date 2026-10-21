@@ -23,8 +23,13 @@ const ALLOWED_PATHS = [
   new RegExp(`^v2/mmr-history/${REGION}/(pc|console)/[^/]+/[^/]+$`),
   new RegExp(`^v4/matches/${REGION}/(pc|console)/[^/]+/[^/]+$`),
   /^v1\/store-featured$/,
+  new RegExp(`^v3/leaderboard/${REGION}/(pc|console)$`),
+  new RegExp(`^v1/status/${REGION}$`),
+  /^v1\/website\/[a-z]{2}-[a-z]{2}$/,
+  /^v1\/esports\/schedule$/,
+  /^v1\/crosshair\/generate$/, // answers with a PNG picture, not JSON
 ];
-const ALLOWED_QUERY = ['size', 'mode', 'start'];
+const ALLOWED_QUERY = ['size', 'mode', 'start', 'start_index', 'name', 'tag', 'id', 'league'];
 
 // Same shape as the API's own errors, so the page handles both the same way
 function errorResponse(status: number, message: string): Response {
@@ -52,7 +57,7 @@ export async function proxyValorant(request: Request, apiKey: string | undefined
     return errorResponse(502, "Couldn't reach the HenrikDev API");
   }
 
-  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const headers = new Headers({ 'Content-Type': response.headers.get('Content-Type') ?? 'application/json' });
   if (response.ok) {
     // Let Netlify's CDN reuse an answer for 2 minutes, so looking up the same
     // player again (or many visitors loading the store) doesn't use up our rate limit
@@ -64,7 +69,8 @@ export async function proxyValorant(request: Request, apiKey: string | undefined
   const retryAfter = response.headers.get('Retry-After');
   if (retryAfter) headers.set('Retry-After', retryAfter);
 
-  return new Response(await response.text(), { status: response.status, headers });
+  // arrayBuffer, not text, so pictures (the crosshair) come through unchanged
+  return new Response(await response.arrayBuffer(), { status: response.status, headers });
 }
 
 export default (request: Request) => proxyValorant(request, process.env.HENRIK_API_KEY);

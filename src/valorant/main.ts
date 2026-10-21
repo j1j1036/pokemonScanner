@@ -5,49 +5,55 @@
  *   api.ts       -> find the account by Riot ID (that tells us its region),
  *                   then load its rank, RR history and recent matches together
  *   chart.ts     -> draw the RR history
+ *   matches.ts   -> the scoreboard and rounds under each match
  *   this file    -> show everything else
  *
+ * The page has tabs: Player (the lookup and the featured store) plus the
+ * Leaderboard, News, Esports and Crosshair tabs from explore.ts.
  * The featured store is the same for everyone, so it loads once, on page open.
- * The player's own daily shop needs their Riot login, so it loads only when
- * they paste in the link from Riot's login page. That panel is only for the
- * site owner: it appears after opening the page once with #key=<SHOP_OWNER_KEY>.
+ * The site owner also gets "My shop" in a sidebar (shop.ts).
  */
 import './style.css';
 import {
-  ApiError,
-  VP_ICON,
   agentIcon,
   cardBanner,
   getAccount,
+  getAgents,
   getBundleInfo,
   getFeaturedBundles,
   getItemInfo,
+  getMaps,
   getMatches,
   getMmr,
   getMmrHistory,
-  getMyShop,
   getTitleText,
-  parseLoginLink,
+  isFreeForAll,
+  lookUpKey,
   rankIcon,
-  RIOT_LOGIN_URL,
 } from './api';
-import type { Account, Bundle, Match, Mmr, MmrChange, Platform, ShopItem } from './api';
+import type { Account, Agent, Bundle, GameMap, ItemInfo, Match, Mmr, MmrChange, Platform, Region, Shop } from './api';
 import { renderRrChart, signed } from './chart';
+import { loadTab, showServerStatus } from './explore';
+import type { ExploreTab } from './explore';
+import { renderMatchDetails } from './matches';
+import { initShop, loadedShop, ownerKey } from './shop';
+import { findSkin, rarityIcon, rarityStyle } from './skins';
+import { CHECK_ICON, errorMessage, escapeHtml, timeAgo, timeLeft, vp } from './util';
 
 // ---------------------------------------------------------------------------
 // Page layout
 // ---------------------------------------------------------------------------
 
-// Small inline icons; they take the text color
-const LOCK_ICON =
-  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 7V5a4 4 0 1 1 8 0v2h.5A1.5 1.5 0 0 1 14 8.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-5A1.5 1.5 0 0 1 3.5 7H4Zm2 0h4V5a2 2 0 1 0-4 0v2Z"/></svg>';
-const CLOCK_ICON =
-  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 2a5 5 0 1 0 0 10A5 5 0 0 0 8 3Zm.75 1.5V7.7l2.1 1.2-.75 1.3L7.25 8.6V4.5h1.5Z"/></svg>';
-const EXTERNAL_ICON =
-  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9 2h5v5h-1.5V4.56L7.53 9.53 6.47 8.47l4.97-4.97H9V2ZM3.5 4H7v1.5H3.5v7h7V9H12v3.5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 2 12.5v-7A1.5 1.5 0 0 1 3.5 4Z"/></svg>';
-
 // valorant/index.html only contains an empty <div id="app">; we fill it in here
 const app = document.querySelector<HTMLDivElement>('#app')!;
+
+const TABS: { id: 'player' | ExploreTab; name: string }[] = [
+  { id: 'player', name: 'Player' },
+  { id: 'leaderboard', name: 'Leaderboard' },
+  { id: 'news', name: 'News' },
+  { id: 'esports', name: 'Esports' },
+  { id: 'crosshair', name: 'Crosshair' },
+];
 
 app.innerHTML = `
   <a class="back" href="/">← My projects</a>
@@ -55,9 +61,18 @@ app.innerHTML = `
   <main class="main">
   <header class="top">
     <h1>Valorant Tracker</h1>
-    <p class="tagline">Look up any player’s rank, RR and recent matches.</p>
+    <p class="tagline">Ranks, matches, the store, leaderboards and more.</p>
   </header>
 
+  <!-- Server problems or maintenance, if there are any -->
+  <div id="server-status"></div>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    ${TABS.map((tab, index) => `<button type="button" role="tab" id="tab-${tab.id}" aria-controls="pane-${tab.id}"
+      aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}">${tab.name}</button>`).join('')}
+  </nav>
+
+  <div id="pane-player" role="tabpanel" aria-labelledby="tab-player">
   <form id="search" class="search">
     <label class="riot-id">Riot ID
       <input id="riot-id" name="riotId" placeholder="Name#TAG" autocomplete="off" spellcheck="false" required />
@@ -98,6 +113,7 @@ app.innerHTML = `
 
     <section class="panel">
       <h2>Recent matches</h2>
+      <p class="sub">Click a match for the full scoreboard and every round.</p>
       <div id="match-summary" class="stats"></div>
       <ul id="matches" class="matches"></ul>
     </section>
@@ -106,49 +122,19 @@ app.innerHTML = `
   <section class="panel">
     <h2>Store</h2>
     <p class="sub">
-      The featured bundle, which is the same for every player.
+      The featured bundle, which is the same for every player. Click a skin to preview it.
     </p>
     <div id="store" class="store"><p class="muted">Loading the store…</p></div>
   </section>
+  </div>
 
+  ${TABS.slice(1)
+    .map((tab) => `<div id="pane-${tab.id}" role="tabpanel" aria-labelledby="tab-${tab.id}" hidden></div>`)
+    .join('')}
   </main>
 
-  <!-- Only for the site owner (see setUpOwnerKey). Beside the page on wide screens. -->
-  <aside id="my-shop-panel" class="sidebar" hidden>
-    <section class="panel shop-panel">
-      <div class="shop-title">
-        <h2>My shop</h2>
-        <span class="private">${LOCK_ICON}Only you</span>
-      </div>
-
-      <div id="shop-login">
-        <p class="sub">Your daily offers and Night Market. Log in on Riot’s site, then paste the link you land on.</p>
-        <ol class="steps">
-          <li>
-            <span class="step-num">1</span>
-            <a class="riot-login" href="${RIOT_LOGIN_URL}" target="_blank" rel="noopener">Log in with Riot ${EXTERNAL_ICON}</a>
-          </li>
-          <li>
-            <span class="step-num">2</span>
-            <p>Copy the whole address from <strong>playvalorant.com</strong></p>
-          </li>
-          <li>
-            <span class="step-num">3</span>
-            <form id="shop-form" class="shop-form">
-              <label class="visually-hidden" for="shop-link">Link from the address bar</label>
-              <input id="shop-link" name="link" type="password" placeholder="Paste the link here"
-                autocomplete="off" spellcheck="false" required />
-              <button type="submit">Show my shop</button>
-            </form>
-          </li>
-        </ol>
-        <p class="fine-print">The login lasts about an hour and is never saved.</p>
-      </div>
-
-      <p id="shop-status" class="status" role="status"></p>
-      <div id="my-shop" class="my-shop"></div>
-    </section>
-  </aside>
+  <!-- Only for the site owner (see shop.ts). Beside the page on wide screens. -->
+  <aside id="my-shop-panel" class="sidebar" hidden></aside>
   </div>
 
   <footer class="credits">
@@ -173,12 +159,8 @@ const rrTable = document.querySelector<HTMLDetailsElement>('#rr-table')!;
 const summaryEl = document.querySelector<HTMLDivElement>('#match-summary')!;
 const matchesEl = document.querySelector<HTMLUListElement>('#matches')!;
 const storeEl = document.querySelector<HTMLDivElement>('#store')!;
+const serverStatusEl = document.querySelector<HTMLDivElement>('#server-status')!;
 const myShopPanel = document.querySelector<HTMLElement>('#my-shop-panel')!;
-const shopLoginEl = document.querySelector<HTMLDivElement>('#shop-login')!;
-const shopForm = document.querySelector<HTMLFormElement>('#shop-form')!;
-const shopLinkInput = document.querySelector<HTMLInputElement>('#shop-link')!;
-const shopStatusEl = document.querySelector<HTMLParagraphElement>('#shop-status')!;
-const myShopEl = document.querySelector<HTMLDivElement>('#my-shop')!;
 
 // Counts lookups, so a slow answer for an older lookup can't overwrite a newer one
 let currentLookup = 0;
@@ -189,18 +171,6 @@ let currentLookup = 0;
 
 function setStatus(message: string): void {
   statusEl.textContent = message;
-}
-
-// Make text safe to put inside innerHTML: turns "<" into "&lt;" and so on,
-// so a player name can never be interpreted as HTML.
-// Quotes are escaped too, so it's also safe inside attributes like src="..." and alt="..."
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 // A missing picture (e.g. a new agent valorant-api.com doesn't have yet)
@@ -222,50 +192,10 @@ function parseRiotId(text: string): { name: string; tag: string } | null {
   return hash > 0 && name && tag ? { name, tag } : null;
 }
 
-// Explain an error in plain words. `notFound` is what a 404 means in that place.
-function errorMessage(error: unknown, notFound: string): string {
-  if (error instanceof ApiError) {
-    if (error.status === 404) return notFound;
-    if (error.status === 429) return `Too many lookups right now. Try again in ${error.retryAfter ?? 60} seconds.`;
-    return error.message;
-  }
-  return "Couldn't reach the server. Check your connection and try again.";
-}
-
 // "e9a3" -> "E9 A3"
 function actName(short: string): string {
   return short.toUpperCase().replace(/(\d)A/, '$1 A');
 }
-
-const relativeTime = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-
-// An ISO date -> "3 hours ago", "yesterday", …
-function timeAgo(date: string): string {
-  const seconds = (new Date(date).getTime() - Date.now()) / 1000;
-  const units: [Intl.RelativeTimeFormatUnit, number][] = [
-    ['year', 31_536_000],
-    ['month', 2_592_000],
-    ['week', 604_800],
-    ['day', 86_400],
-    ['hour', 3_600],
-    ['minute', 60],
-  ];
-  for (const [unit, size] of units) {
-    if (Math.abs(seconds) >= size) return relativeTime.format(Math.round(seconds / size), unit);
-  }
-  return 'just now';
-}
-
-// 200000 -> "2d 7h", 7000 -> "1h 56m"
-function timeLeft(seconds: number): string {
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  return days > 0 ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
-}
-
-// A price in Valorant Points, with the VP icon
-const vp = (amount: number) => `<span class="vp"><img src="${VP_ICON}" alt="" />${amount.toLocaleString('en')}</span>`;
 
 // CSS class for a gain (green) or loss (red)
 const changeClass = (value: number) => (value > 0 ? 'up' : value < 0 ? 'down' : '');
@@ -350,6 +280,7 @@ async function lookUp(riotId: string, platform: Platform): Promise<void> {
   document.title = `${canonical} · Valorant Tracker`;
 
   setStatus('');
+  void showServerStatus(serverStatusEl, account.region as Region);
   renderProfile(account, platform);
   rankEl.innerHTML = '<p class="muted">Loading rank…</p>';
   chartEl.replaceChildren();
@@ -377,7 +308,12 @@ async function lookUp(riotId: string, platform: Platform): Promise<void> {
     renderRrHistory(changes);
   }
 
-  if (matches.status === 'fulfilled') renderMatches(matches.value, account, changes);
+  if (matches.status === 'fulfilled') {
+    // Agent roles and map pictures are extras; matches still show without them
+    const [agents, maps] = await Promise.all([getAgents().catch(() => null), getMaps().catch(() => null)]);
+    if (lookup !== currentLookup) return;
+    renderMatches(matches.value, account, changes, agents, maps);
+  }
   else matchesEl.innerHTML = `<li class="muted">${escapeHtml(errorMessage(matches.reason, 'No recent matches found.'))}</li>`;
 }
 
@@ -490,7 +426,13 @@ function renderRrHistory(changes: MmrChange[]): void {
   rrTable.hidden = false;
 }
 
-function renderMatches(matches: Match[], account: Account, changes: MmrChange[]): void {
+function renderMatches(
+  matches: Match[],
+  account: Account,
+  changes: MmrChange[],
+  agents: Map<string, Agent> | null,
+  maps: Map<string, GameMap> | null,
+): void {
   // RR won or lost per match, for the ranked games in the history
   const rrByMatch = new Map(changes.map((change) => [change.match_id, change.last_change]));
 
@@ -498,7 +440,7 @@ function renderMatches(matches: Match[], account: Account, changes: MmrChange[])
   const games = matches.flatMap((match) => {
     const player = match.players.find((p) => p.puuid === account.puuid);
     if (!player) return [];
-    const team = match.teams.find((t) => t.team_id === player.team_id);
+    const team = isFreeForAll(match) ? undefined : match.teams.find((t) => t.team_id === player.team_id);
     const rounds = Math.max(match.rounds.length, 1);
     const { stats } = player;
     const shots = stats.headshots + stats.bodyshots + stats.legshots;
@@ -544,6 +486,14 @@ function renderMatches(matches: Match[], account: Account, changes: MmrChange[])
   // Most played agents, e.g. "Jett ×4, Sova ×2"
   const agentCounts = new Map<string, number>();
   for (const game of games) agentCounts.set(game.player.agent.name, (agentCounts.get(game.player.agent.name) ?? 0) + 1);
+  // Most played role (Duelist, Initiator, …), when the agent list loaded
+  const roleCounts = new Map<string, number>();
+  for (const game of games) {
+    const role = agents?.get(lookUpKey(game.player.agent.id))?.role?.name;
+    if (role) roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1);
+  }
+  const topRole = [...roleCounts].sort((a, b) => b[1] - a[1])[0]?.[0];
+
   const topAgents = [...agentCounts]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
@@ -557,36 +507,74 @@ function renderMatches(matches: Match[], account: Account, changes: MmrChange[])
     ${tile('K/D', kd.toFixed(2))}
     ${tile('Headshot %', shots ? `${Math.round((headshots / shots) * 100)}%` : '–')}
     ${tile('Damage / round', String(Math.round(damage / rounds)))}
-    <p class="agents muted">Last ${games.length} matches · Most played: ${topAgents}</p>
+    <p class="agents muted">Last ${games.length} matches · Most played: ${topAgents}${topRole ? ` · Mostly ${escapeHtml(topRole)}` : ''}</p>
   `;
 
   const resultLabel = { win: 'Win', loss: 'Loss', draw: 'Draw' };
   matchesEl.innerHTML = games
-    .map(({ match, player, team, result, acs, adr, headshotPercent, rrChange }) => {
+    .map(({ match, player, team, result, acs, adr, headshotPercent, rrChange }, index) => {
       const { kills, deaths, assists } = player.stats;
       const mode = match.metadata.queue.name ?? match.metadata.queue.id;
-      return `<li class="match ${result ?? ''}">
-        <img class="agent" src="${escapeHtml(agentIcon(player.agent.id))}" alt="${escapeHtml(player.agent.name)}" />
-        <div class="match-main">
-          <p class="match-title">${escapeHtml(match.metadata.map.name)} <span class="muted">· ${escapeHtml(mode)}</span></p>
-          <p class="muted">${escapeHtml(player.agent.name)} · ${timeAgo(match.metadata.started_at)}</p>
-        </div>
-        <div class="match-result">
-          ${result ? `<p class="result">${resultLabel[result]}${team ? ` ${team.rounds.won}–${team.rounds.lost}` : ''}</p>` : ''}
-          ${rrChange !== undefined ? `<p class="${changeClass(rrChange)}">${signed(rrChange)} RR</p>` : ''}
-        </div>
-        <div class="match-stats">
-          <p class="kda">${kills} / ${deaths} / ${assists}</p>
-          <p class="muted">ACS ${acs} · ADR ${adr} · HS ${headshotPercent}%</p>
-        </div>
+      const map = maps?.get(lookUpKey(match.metadata.map.id));
+      const role = agents?.get(lookUpKey(player.agent.id))?.role;
+      // The whole row is a button that opens the details under it
+      return `<li class="match-item">
+        <button type="button" class="match ${result ?? ''}" aria-expanded="false" aria-controls="match-${index}"
+          ${map?.listViewIcon ? `style="--map: url('${escapeHtml(map.listViewIcon)}')"` : ''}>
+          <span class="agent-wrap">
+            <img class="agent" src="${escapeHtml(agentIcon(player.agent.id))}" alt="${escapeHtml(player.agent.name)}" />
+            ${role ? `<img class="role" src="${escapeHtml(role.icon)}" alt="${escapeHtml(role.name)}" title="${escapeHtml(role.name)}" />` : ''}
+          </span>
+          <span class="match-main">
+            <span class="match-title">${escapeHtml(match.metadata.map.name)} <span class="muted">· ${escapeHtml(mode)}</span></span>
+            <span class="muted">${escapeHtml(player.agent.name)} · ${timeAgo(match.metadata.started_at)}</span>
+          </span>
+          <span class="match-result">
+            ${result ? `<span class="result">${resultLabel[result]}${team ? ` ${team.rounds.won}–${team.rounds.lost}` : ''}</span>` : ''}
+            ${rrChange !== undefined ? `<span class="${changeClass(rrChange)}">${signed(rrChange)} RR</span>` : ''}
+          </span>
+          <span class="match-stats">
+            <span class="kda">${kills} / ${deaths} / ${assists}</span>
+            <span class="muted">${
+              // Deathmatch counts as one long round, so per-round numbers mean nothing there
+              isFreeForAll(match) ? `Score ${player.stats.score.toLocaleString('en')}` : `ACS ${acs} · ADR ${adr} · HS ${headshotPercent}%`
+            }</span>
+          </span>
+        </button>
+        <div class="match-details" id="match-${index}" hidden></div>
       </li>`;
     })
     .join('');
+
+  // Open a match: draw its details the first time
+  matchesEl.querySelectorAll<HTMLButtonElement>('button.match').forEach((button, index) => {
+    button.addEventListener('click', () => {
+      const details = button.nextElementSibling as HTMLDivElement;
+      const open = button.getAttribute('aria-expanded') !== 'true';
+      button.setAttribute('aria-expanded', String(open));
+      details.hidden = !open;
+      if (open && !details.hasChildNodes()) details.innerHTML = renderMatchDetails(games[index].match, account.puuid, agents);
+    });
+  });
 }
+
+// Clicking a name on a scoreboard looks that player up
+matchesEl.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-player]');
+  if (button) showPlayer(button.dataset.player!, platformSelect.value as Platform);
+});
 
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
+
+interface BundleDetails {
+  bundle: Bundle;
+  info: { displayName: string; displayIcon: string | null } | null;
+  items: { entry: Bundle['Items'][number]; info: ItemInfo | null }[];
+}
+
+let storeDetails: BundleDetails[] | null = null;
 
 async function loadStore(): Promise<void> {
   let bundles: Bundle[];
@@ -602,7 +590,7 @@ async function loadStore(): Promise<void> {
   }
 
   // Names and pictures come from valorant-api.com; anything it can't find is left out
-  const details = await Promise.all(
+  storeDetails = await Promise.all(
     bundles.map(async (bundle) => ({
       bundle,
       info: await getBundleInfo(bundle.DataAssetID).catch(() => null),
@@ -614,10 +602,33 @@ async function loadStore(): Promise<void> {
       ),
     })),
   );
+  await renderStore();
+}
 
-  storeEl.innerHTML = details
+const SKIN_TYPE = 'e7c63390-eda7-46e0-bb7a-a6abdacd2433';
+
+// Drawn again when the owner's shop loads, to mark what they already own
+async function renderStore(): Promise<void> {
+  if (!storeDetails) return;
+  const shop: Shop | null = loadedShop;
+  const owned = (itemId: string) => shop?.owned?.includes(lookUpKey(itemId)) ?? false;
+
+  // Rarity colors for the skins; drawn without them if the skin list doesn't load
+  const skins = new Map(
+    await Promise.all(
+      storeDetails.flatMap(({ items }) =>
+        items
+          .filter(({ entry }) => entry.Item.ItemTypeID === SKIN_TYPE)
+          .map(async ({ entry }) => [entry.Item.ItemID, await findSkin(entry.Item.ItemID).catch(() => null)] as const),
+      ),
+    ),
+  );
+
+  storeEl.innerHTML = storeDetails
     .map(({ bundle, info, items }) => {
       const price = bundle.Items.reduce((total, entry) => total + entry.DiscountedPrice, 0);
+      // What buying the items you don't have yet would cost, item by item
+      const missingPrice = bundle.Items.reduce((total, entry) => total + (owned(entry.Item.ItemID) ? 0 : entry.DiscountedPrice), 0);
       const known = items.filter((item) => item.info);
       return `<article class="bundle">
         ${info?.displayIcon ? `<img class="bundle-art" src="${escapeHtml(info.displayIcon)}" alt="" />` : ''}
@@ -626,16 +637,32 @@ async function loadStore(): Promise<void> {
             <h3>${escapeHtml(info?.displayName ?? 'Featured bundle')}</h3>
             <p class="muted">Leaves the store in ${timeLeft(bundle.DurationRemainingInSeconds)}</p>
           </div>
-          <p class="bundle-price">${vp(price)}</p>
+          <div class="bundle-price">
+            <p>${vp(price)}</p>
+            ${
+              shop?.owned && missingPrice !== price
+                ? `<p class="muted small">Without what you own: ${vp(missingPrice)}</p>`
+                : ''
+            }
+            ${
+              shop?.wallet
+                ? `<p class="small ${shop.wallet.vp >= price ? 'up' : 'muted'}">You have ${vp(shop.wallet.vp)}</p>`
+                : ''
+            }
+          </div>
         </div>
         <ul class="items">${known
-          .map(
-            ({ entry, info: item }) => `<li>
+          .map(({ entry, info: item }) => {
+            const skin = skins.get(entry.Item.ItemID);
+            const clickable = skin ? `data-skin="${escapeHtml(entry.Item.ItemID)}" tabindex="0" role="button" aria-label="${escapeHtml(item!.name)}. Show preview"` : '';
+            return `<li class="${skin ? 'has-rarity' : ''} ${owned(entry.Item.ItemID) ? 'is-owned' : ''}" ${rarityStyle(skin)} ${clickable}>
+              ${rarityIcon(skin)}
+              ${owned(entry.Item.ItemID) ? `<span class="owned-mark" title="You own this">${CHECK_ICON}</span>` : ''}
               ${item!.icon ? `<img class="item-icon" src="${escapeHtml(item!.icon)}" alt="" />` : '<span class="item-icon"></span>'}
               <p>${escapeHtml(item!.name)}</p>
               <p class="muted">${item!.kind}${entry.DiscountedPrice ? ` · ${vp(entry.DiscountedPrice)}` : ' · included'}</p>
-            </li>`,
-          )
+            </li>`;
+          })
           .join('')}</ul>
       </article>`;
     })
@@ -643,117 +670,40 @@ async function loadStore(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// The player's own shop
+// Tabs
 // ---------------------------------------------------------------------------
 
-const OWNER_KEY = 'valorant-owner-key';
+const tabButtons = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"][id^="tab-"]')];
 
-// Opening the page with #key=… remembers the owner key in this browser
-// (#key= with nothing after it forgets it). The part after # is never sent to
-// any server, so the key doesn't end up in logs. Returns the key, if any.
-function setUpOwnerKey(): string | null {
-  const fromLink = new URLSearchParams(location.hash.slice(1)).get('key');
-  if (fromLink !== null) {
-    try {
-      if (fromLink) localStorage.setItem(OWNER_KEY, fromLink);
-      else localStorage.removeItem(OWNER_KEY);
-    } catch {
-      // Not saved; it still works for this visit
-    }
-    // Take the key out of the address bar so it isn't shared by accident
-    history.replaceState(null, '', location.pathname + location.search);
-    return fromLink || null;
+function openTab(id: string): void {
+  for (const button of tabButtons) {
+    const selected = button.id === `tab-${id}`;
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    document.querySelector<HTMLElement>(`#pane-${button.id.slice(4)}`)!.hidden = !selected;
   }
-  try {
-    return localStorage.getItem(OWNER_KEY);
-  } catch {
-    return null;
-  }
+  if (id !== 'player') loadTab(id as ExploreTab, document.querySelector(`#pane-${id}`)!, showPlayer);
 }
 
-const ownerKey = setUpOwnerKey();
-myShopPanel.hidden = !ownerKey;
-// Makes the page wider, with the shop beside it (see .with-sidebar in style.css)
-app.classList.toggle('with-sidebar', !!ownerKey);
-
-// While the shop loads: grey placeholder cards in its shape
-const SKELETON = `<ul class="offers">${'<li class="offer skeleton"><div class="offer-art"></div><div class="offer-info"><span></span><span></span></div></li>'.repeat(4)}</ul>`;
-
-function showShopLogin(): void {
-  myShopEl.replaceChildren();
-  shopLoginEl.hidden = false;
+// Look a player up from another tab (leaderboard, scoreboards)
+function showPlayer(riotId: string, platform: Platform): void {
+  openTab('player');
+  riotIdInput.value = riotId;
+  platformSelect.value = platform;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  void lookUp(riotId, platform);
 }
 
-async function loadMyShop(link: string): Promise<void> {
-  const tokens = parseLoginLink(link);
-  if (!tokens) {
-    shopStatusEl.textContent = 'That link has no login in it. Copy the whole address after logging in, including everything after the #.';
-    return;
-  }
-
-  shopStatusEl.textContent = '';
-  shopLoginEl.hidden = true;
-  myShopEl.innerHTML = SKELETON;
-  let shop;
-  try {
-    shop = await getMyShop(tokens, ownerKey!);
-  } catch (error) {
-    shopStatusEl.textContent = errorMessage(error, "The server didn't accept your owner key. Open the page with #key= and the right key.");
-    showShopLogin();
-    return;
-  }
-
-  // Names and pictures come from valorant-api.com, like in the featured store
-  const withInfo = (items: ShopItem[]) =>
-    Promise.all(items.map(async (item) => ({ item, info: await getItemInfo(item.itemTypeId, item.itemId).catch(() => null) })));
-  const [daily, nightMarket] = await Promise.all([withInfo(shop.daily.items), withInfo(shop.nightMarket?.items ?? [])]);
-
-  const list = (entries: Awaited<ReturnType<typeof withInfo>>) =>
-    `<ul class="offers">${entries
-      .map(
-        ({ item, info }) => `<li class="offer">
-          <div class="offer-art">
-            ${info?.icon ? `<img src="${escapeHtml(info.icon)}" alt="" />` : ''}
-            ${item.discountPercent ? `<span class="discount">−${item.discountPercent}%</span>` : ''}
-          </div>
-          <div class="offer-info">
-            <p class="offer-name">${escapeHtml(info?.name ?? 'Unknown item')}</p>
-            <p class="offer-price">${vp(item.price)}${
-              item.discountPercent ? `<s class="muted">${item.basePrice.toLocaleString('en')}</s>` : ''
-            }</p>
-          </div>
-        </li>`,
-      )
-      .join('')}</ul>`;
-
-  // data-ends: when the countdown runs out, so updateShopTimers can keep it current
-  const group = (title: string, secondsLeft: number, entries: Awaited<ReturnType<typeof withInfo>>, className = '') => `
-    <div class="shop-group ${className}">
-      <div class="shop-group-head">
-        <h3>${title}</h3>
-        <span class="timer" data-ends="${Date.now() + secondsLeft * 1000}">${CLOCK_ICON}<span>${timeLeft(secondsLeft)}</span></span>
-      </div>
-      ${list(entries)}
-    </div>`;
-
-  const dailyTotal = shop.daily.items.reduce((total, item) => total + item.price, 0);
-  myShopEl.innerHTML = `
-    ${group('Daily offers', shop.daily.secondsLeft, daily)}
-    ${shop.nightMarket ? group('Night Market', shop.nightMarket.secondsLeft, nightMarket, 'night-market') : ''}
-    <div class="shop-footer">
-      <p class="muted">All 4 daily offers: ${vp(dailyTotal)}</p>
-      <button type="button" class="link-button" id="shop-reset">Log in again</button>
-    </div>
-  `;
-  myShopEl.querySelector('#shop-reset')!.addEventListener('click', showShopLogin);
-}
-
-// Count the shop's timers down while the page is open
-function updateShopTimers(): void {
-  for (const timer of myShopEl.querySelectorAll<HTMLElement>('[data-ends]')) {
-    const secondsLeft = (Number(timer.dataset.ends) - Date.now()) / 1000;
-    timer.querySelector('span')!.textContent = secondsLeft > 0 ? timeLeft(secondsLeft) : 'Refreshed, log in again';
-  }
+for (const button of tabButtons) {
+  button.addEventListener('click', () => openTab(button.id.slice(4)));
+  // Arrow keys move between tabs, like in any tab list
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    const index = tabButtons.indexOf(button);
+    const next = tabButtons[(index + (event.key === 'ArrowRight' ? 1 : tabButtons.length - 1)) % tabButtons.length];
+    next.focus();
+    openTab(next.id.slice(4));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -766,17 +716,17 @@ searchForm.addEventListener('submit', (event) => {
   void lookUp(riotIdInput.value.trim(), platformSelect.value as Platform);
 });
 
-shopForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const link = shopLinkInput.value;
-  // Don't leave the login sitting in the page once it's been used
-  shopLinkInput.value = '';
-  void loadMyShop(link);
-});
+// The owner gets the wider page with "My shop" beside it (see .with-sidebar in style.css)
+if (ownerKey) {
+  myShopPanel.hidden = false;
+  app.classList.add('with-sidebar');
+  initShop(myShopPanel);
+  document.addEventListener('myshop', () => void renderStore());
+}
 
 renderRecent();
 void loadStore();
-setInterval(updateShopTimers, 30_000);
+void showServerStatus(serverStatusEl, 'eu');
 
 // A shared link like ?player=Name%23TAG&platform=pc looks that player up straight away
 const params = new URLSearchParams(location.search);
