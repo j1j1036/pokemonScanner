@@ -77,11 +77,15 @@ function setStatus(message: string): void {
 }
 
 // Make text safe to put inside innerHTML: turns "<" into "&lt;" and so on,
-// so a card name can never be interpreted as HTML
+// so a card name can never be interpreted as HTML.
+// Quotes are escaped too, so it's also safe inside attributes like src="..." and alt="..."
 function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // Turn what the user typed in the Number box into a CardNumber:
@@ -207,7 +211,7 @@ function renderResults(cards: CardResumeModel[]): void {
     // Some cards in the database have no image; show a placeholder for those.
     // 'low' quality keeps the grid fast; loading="lazy" loads images only when scrolled into view.
     button.innerHTML = card.image
-      ? `<img src="${card.getImageURL('low', 'webp')}" alt="" loading="lazy" />`
+      ? `<img src="${escapeHtml(card.getImageURL('low', 'webp'))}" alt="" loading="lazy" />`
       : `<div class="no-image">No image</div>`;
     button.insertAdjacentHTML('beforeend', `<span>${escapeHtml(card.name)}<small>${escapeHtml(card.id)}</small></span>`);
     button.addEventListener('click', () => showCard(card.id));
@@ -218,7 +222,7 @@ function renderResults(cards: CardResumeModel[]): void {
 
 // Format a price like "0.04 EUR", or "—" when the value is missing
 function formatPrice(value: unknown, unit: string): string {
-  return typeof value === 'number' ? `${value.toFixed(2)} ${unit}` : '—';
+  return typeof value === 'number' ? `${value.toFixed(2)} ${escapeHtml(unit)}` : '—';
 }
 
 // Build the prices table from whichever markets have data for this card
@@ -270,7 +274,7 @@ async function showCard(id: string): Promise<void> {
   ].filter(([, value]) => value !== undefined && value !== '');
 
   detailEl.innerHTML = `
-    ${card.image ? `<img src="${card.getImageURL('high', 'webp')}" alt="${escapeHtml(card.name)}" />` : ''}
+    ${card.image ? `<img src="${escapeHtml(card.getImageURL('high', 'webp'))}" alt="${escapeHtml(card.name)}" />` : ''}
     <div>
       <h2>${escapeHtml(card.name)}</h2>
       <dl>${details.map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}</dl>
