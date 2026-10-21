@@ -432,3 +432,8 @@ FodyWeavers.xsd
 
 # Vite build output
 dist/
+
+# Secrets such as API keys. .env.example is the template and is committed.
+.env
+.env.*
+!.env.example

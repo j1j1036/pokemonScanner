@@ -1,0 +1,667 @@
+/* ---------------------------------------------------------------------------
+   Colors and sizes. Everything below uses these variables, so the dark theme
+   only has to redefine them.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --bg: #ece8e1;
+  --surface: #ffffff;
+  --surface-2: #f4f1ec;
+  --text: #0f1923;
+  --muted: #5d6872;
+  --border: #d9d2c6;
+  --accent: #ff4655;
+  --accent-hover: #e83a4a;
+  --accent-ink: #ffffff;
+  --up: #12805c;
+  --down: #d12b3b;
+  --grid: #0f19231f;
+  --shadow: 0 1px 2px #0000000d, 0 6px 20px #0000000f;
+  --radius: 8px;
+
+  font-family: 'Outfit', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0f1923;
+    --surface: #18242f;
+    --surface-2: #1f2d3a;
+    --text: #ece8e1;
+    --muted: #93a0aa;
+    --border: #2b3a47;
+    --accent-hover: #ff6370;
+    --up: #3ccf9e;
+    --down: #ff6b77;
+    --grid: #ece8e11f;
+    --shadow: 0 1px 2px #0000004d, 0 6px 20px #00000040;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Elements given a display (grid, flex) below would otherwise ignore the hidden attribute */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+p {
+  margin: 0;
+}
+
+#app {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px 16px calc(40px + env(safe-area-inset-bottom));
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ---------------------------------------------------------------------------
+   Header and search
+   --------------------------------------------------------------------------- */
+.back {
+  display: inline-block;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.back:hover {
+  color: var(--accent);
+}
+
+.top h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+}
+
+.tagline {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.search label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.search .riot-id {
+  flex: 1 1 220px;
+}
+
+.search input,
+.search select,
+.search button {
+  font: inherit;
+  font-size: 1rem;
+  height: 44px;
+  border-radius: var(--radius);
+}
+
+.search input,
+.search select {
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.search input:focus-visible,
+.search select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.search button {
+  padding: 0 22px;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.search button:hover {
+  background: var(--accent-hover);
+}
+
+.recent {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+}
+
+.status {
+  min-height: 1.45em;
+  margin: 14px 0;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Sections
+   --------------------------------------------------------------------------- */
+.player {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.panel {
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.panel .sub {
+  margin: -6px 0 14px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Profile: the player card banner with the name under it */
+.profile {
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.banner {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  background: var(--surface-2);
+}
+
+.profile-body {
+  padding: 14px 18px 16px;
+}
+
+.profile h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  margin-left: 4px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   Rank
+   --------------------------------------------------------------------------- */
+.rank-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  align-items: center;
+}
+
+.rank-now,
+.rank-peak {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rank-now {
+  flex: 1 1 260px;
+}
+
+.rank-now img {
+  width: 80px;
+  height: 80px;
+}
+
+.rank-peak img {
+  width: 44px;
+  height: 44px;
+}
+
+.rank-now > div {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.rank-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rr-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.rr-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+th,
+td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.seasons {
+  margin-top: 16px;
+}
+
+.tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tier img {
+  width: 22px;
+  height: 22px;
+}
+
+/* ---------------------------------------------------------------------------
+   RR chart
+   --------------------------------------------------------------------------- */
+.chart {
+  position: relative;
+  min-height: 60px;
+}
+
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+
+.chart svg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.chart .grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.chart .tick {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.chart .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* A ring in the panel's color keeps dots readable where they sit on the line */
+.chart .dot {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.chart .end-label {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart .crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.chart-tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: grid;
+  gap: 1px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.chart-tooltip strong {
+  font-size: 1rem;
+}
+
+.table-view {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.table-view summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.table-view table {
+  margin-top: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   Matches
+   --------------------------------------------------------------------------- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stat {
+  padding: 12px;
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+
+.stat .value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat .muted {
+  font-size: 0.85rem;
+}
+
+.stats .agents {
+  grid-column: 1 / -1;
+  font-size: 0.9rem;
+}
+
+.matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+/* One match: agent | map & time | result | stats. The left edge shows the result. */
+.match {
+  display: grid;
+  grid-template-columns: 48px 1fr auto auto;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 10px 14px 10px 10px;
+  background: var(--surface-2);
+  border-left: 4px solid var(--border);
+  border-radius: 6px;
+}
+
+.match.win {
+  border-left-color: var(--up);
+}
+
+.match.loss {
+  border-left-color: var(--down);
+}
+
+.match .agent {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+}
+
+.match .muted {
+  font-size: 0.85rem;
+}
+
+.match-title {
+  font-weight: 600;
+}
+
+.match-result,
+.match-stats {
+  text-align: right;
+}
+
+.match .result {
+  font-weight: 700;
+}
+
+.match.win .result {
+  color: var(--up);
+}
+
+.match.loss .result {
+  color: var(--down);
+}
+
+.kda {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* On a phone, stats move to their own line under the map */
+@media (max-width: 560px) {
+  .match {
+    grid-template-columns: 48px 1fr auto;
+  }
+
+  .match-stats {
+    grid-column: 2 / -1;
+    text-align: left;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Store
+   --------------------------------------------------------------------------- */
+.store {
+  display: grid;
+  gap: 18px;
+}
+
+.bundle-art {
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.bundle-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.bundle-head h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.bundle-price {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.vp {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.vp img {
+  width: 1em;
+  height: 1em;
+}
+
+/* The VP icon is white; darken it on the light theme so it stays visible */
+@media (prefers-color-scheme: light) {
+  .vp img {
+    filter: invert(1);
+  }
+}
+
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.items li {
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.items .item-icon {
+  height: 56px;
+  width: 100%;
+  object-fit: contain;
+  margin-bottom: 8px;
+}
+
+span.item-icon {
+  display: block;
+}
+
+.items .muted {
+  font-size: 0.8rem;
+}
+
+.credits {
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.credits a {
+  color: inherit;
+}

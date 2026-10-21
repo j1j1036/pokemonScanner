@@ -1,0 +1,4 @@
+# Netlify settings. Functions are picked up from netlify/functions/ automatically.
+[build]
+  command = "npm run build"
+  publish = "dist"
