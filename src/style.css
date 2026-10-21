@@ -1,24 +1,30 @@
 /* ---------------------------------------------------------------------------
    Colors and sizes. Everything below uses these variables, so the dark theme
-   only has to redefine them.
+   only has to redefine them. The look is a Pokédex: Pokémon blue and yellow,
+   with a little Poké Ball red.
    --------------------------------------------------------------------------- */
 :root {
   color-scheme: light;
-  --bg: #fbf6ea;
-  --surface: #fffdf8;
-  --surface-2: #f4ecd9;
-  --text: #3b2f25;
-  --muted: #8a7b6b;
-  --border: #ecdfc7;
-  --accent: #e8607a;
-  --accent-hover: #d44c67;
-  --accent-soft: #e8607a2e;
-  --sunny: #f7d56b;
+  --bg: #e6f0fc;
+  --surface: #ffffff;
+  --surface-2: #eef4fc;
+  --text: #13234a;
+  --muted: #5b6b8c;
+  --border: #cfdcf0;
+  --accent: #2a75bb; /* Pokémon blue */
+  --accent-hover: #1f63a3;
+  --accent-deep: #1b3f8b; /* the dark blue outline of the Pokémon logo */
+  --accent-soft: #2a75bb33;
+  --sunny: #ffcb05; /* Pokémon yellow */
+  --pokeball: #e3350d;
+  --screen: #0e1e3d; /* the Pokédex screen around the camera */
   --accent-ink: #ffffff;
-  --shadow: 0 1px 2px #0000000d, 0 6px 20px #0000000f;
-  --shadow-lift: 0 2px 4px #00000012, 0 14px 32px #0000001f;
-  --radius: 16px;
-  --radius-sm: 10px;
+  --shadow: 0 1px 2px #0d24520f, 0 6px 20px #0d245214;
+  --shadow-lift: 0 2px 4px #0d245214, 0 14px 32px #0d245226;
+  --radius: 18px;
+  --radius-sm: 12px;
+  /* Faint Poké Balls behind the page */
+  --pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%232a75bb' stroke-opacity='0.09' stroke-width='3'%3E%3Ccircle cx='30' cy='30' r='16'/%3E%3Cpath d='M14 30h10M36 30h10'/%3E%3Ccircle cx='30' cy='30' r='5'/%3E%3Ccircle cx='90' cy='90' r='16'/%3E%3Cpath d='M74 90h10M96 90h10'/%3E%3Ccircle cx='90' cy='90' r='5'/%3E%3C/g%3E%3C/svg%3E");
 
   font-family: 'Outfit', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.45;
@@ -28,17 +34,20 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #1b1714;
-    --surface: #25201b;
-    --surface-2: #2f2922;
-    --text: #f6efe2;
-    --muted: #ab9d8b;
-    --border: #3a322a;
-    --accent: #ff7f97;
-    --accent-hover: #ff96aa;
-    --accent-soft: #ff7f972e;
+    --bg: #0a1530;
+    --surface: #13224a;
+    --surface-2: #1a2c5a;
+    --text: #e8efff;
+    --muted: #93a5cc;
+    --border: #263c70;
+    --accent: #4d9bff;
+    --accent-hover: #6eaeff;
+    --accent-deep: #1b3f8b;
+    --accent-soft: #4d9bff40;
+    --screen: #050c1f;
     --shadow: 0 1px 2px #0000004d, 0 6px 20px #00000040;
     --shadow-lift: 0 2px 4px #00000059, 0 14px 32px #00000066;
+    --pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%234d9bff' stroke-opacity='0.07' stroke-width='3'%3E%3Ccircle cx='30' cy='30' r='16'/%3E%3Cpath d='M14 30h10M36 30h10'/%3E%3Ccircle cx='30' cy='30' r='5'/%3E%3Ccircle cx='90' cy='90' r='16'/%3E%3Cpath d='M74 90h10M96 90h10'/%3E%3Ccircle cx='90' cy='90' r='5'/%3E%3C/g%3E%3C/svg%3E");
   }
 }
 
@@ -51,7 +60,7 @@
 body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--bg);
+  background: var(--pattern), var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
@@ -69,8 +78,16 @@ canvas {
   padding: 20px 16px calc(40px + env(safe-area-inset-bottom));
 }
 
+/* Rounded, playful font for headings, like the games' menus */
+h1,
+h2,
+.photo-btn,
+button.primary {
+  font-family: 'Fredoka', 'Outfit', system-ui, sans-serif;
+}
+
 /* ---------------------------------------------------------------------------
-   Header
+   Header: the top of a Pokédex, with its big lens light and three small lights
    --------------------------------------------------------------------------- */
 /* Link back to the homepage's project list */
 .back {
@@ -86,33 +103,92 @@ canvas {
 }
 
 .top {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   margin-bottom: 18px;
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, #2a75bb, #1b3f8b);
+  color: #fff;
+  box-shadow: var(--shadow-lift), inset 0 -4px 0 #00000026;
+  overflow: hidden;
+}
+
+/* A big faint Poké Ball in the corner of the header */
+.top::after {
+  content: '';
+  position: absolute;
+  right: -40px;
+  top: -40px;
+  width: 170px;
+  height: 170px;
+  border-radius: 50%;
+  border: 14px solid #ffffff14;
+  background: linear-gradient(#ffffff14, #ffffff14) center / 100% 14px no-repeat;
+  pointer-events: none;
+}
+
+/* The big glassy blue light on the Pokédex, with Mimikyu peeking out of it */
+.lens {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #bfe6ff, #3fa4f0 45%, #1667b5 75%);
+  border: 5px solid #fff;
+  box-shadow: 0 0 0 3px #13234a40, 0 0 18px #7cc8ff99;
 }
 
 .top h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.85rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  /* Yellow letters with a dark blue outline, like the Pokémon logo */
+  color: var(--sunny);
+  -webkit-text-stroke: 6px var(--accent-deep);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 #0d2452;
 }
 
 .tagline {
-  margin: 2px 0 0;
-  color: var(--muted);
+  margin: 4px 0 0;
+  color: #dbeaff;
   font-size: 0.92rem;
 }
+
+/* The three little red, yellow and green lights */
+.lights {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.lights span {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid #0d245266;
+}
+
+.lights span:nth-child(1) { background: #ff4d4d; }
+.lights span:nth-child(2) { background: var(--sunny); }
+.lights span:nth-child(3) { background: #4ade80; }
 
 /* Mimikyu mascot: gently bobs up and down */
 .logo {
   flex: none;
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   animation: bob 2.6s ease-in-out infinite;
   transform-origin: 50% 90%;
+  filter: drop-shadow(0 2px 2px #0d245266);
 }
 
 .top:hover .logo {
@@ -130,6 +206,15 @@ canvas {
   75% { transform: rotate(10deg); }
 }
 
+/* While scanning, the big light blinks like the Pokédex is thinking */
+body:has(.viewfinder.scanning) .lens {
+  animation: blink 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes blink {
+  to { box-shadow: 0 0 0 3px #13234a40, 0 0 32px 8px #7cc8ffcc; }
+}
+
 /* ---------------------------------------------------------------------------
    Buttons and inputs
    --------------------------------------------------------------------------- */
@@ -138,7 +223,7 @@ button {
   font-weight: 600;
   padding: 12px 18px;
   border-radius: 999px;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -147,7 +232,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--muted);
+  border-color: var(--accent);
 }
 
 button:active:not(:disabled) {
@@ -163,12 +248,20 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  box-shadow: 0 4px 14px var(--accent-soft);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  /* A chunky bottom edge, like a game button you can press */
+  box-shadow: 0 4px 0 var(--accent-deep), 0 8px 18px var(--accent-soft);
 }
 
 button.primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+}
+
+button.primary:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--accent-deep), 0 4px 10px var(--accent-soft);
 }
 
 button:focus-visible,
@@ -181,7 +274,7 @@ input {
   font: inherit;
   padding: 11px 14px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   background: var(--surface);
   color: var(--text);
   width: 100%;
@@ -199,17 +292,33 @@ input:focus {
 }
 
 /* ---------------------------------------------------------------------------
-   Camera viewfinder
+   Camera viewfinder: the Pokédex screen
    --------------------------------------------------------------------------- */
 .viewfinder {
   position: relative;
   aspect-ratio: 3 / 4;
   max-height: 62dvh;
   margin: 0 auto;
-  background: radial-gradient(ellipse at center, #2a2a30, #0e0e10);
-  border-radius: 22px;
+  background: radial-gradient(ellipse at center, #1a3466, var(--screen));
+  border-radius: 24px;
   overflow: hidden;
-  box-shadow: var(--shadow);
+  /* A thick bezel around the screen */
+  border: 10px solid var(--surface);
+  box-shadow: var(--shadow-lift), 0 0 0 2px var(--border);
+}
+
+/* Two little red dots on the bezel, like the screen on the Pokédex */
+.viewfinder::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 50%;
+  width: 26px;
+  height: 8px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle, var(--pokeball) 3px, transparent 4px) 0 0 / 13px 8px repeat-x;
+  pointer-events: none;
 }
 
 .viewfinder video {
@@ -240,32 +349,32 @@ input:focus {
   aspect-ratio: 63 / 88;
   transform: translate(-50%, -50%);
   border-radius: 16px;
-  border: 1px dashed #ffffff40;
-  box-shadow: 0 0 0 100vmax #00000080;
+  border: 2px dashed #7cc8ff55;
+  box-shadow: 0 0 0 100vmax #050c1f99;
   pointer-events: none;
   overflow: hidden;
 }
 
 .viewfinder.live .guide {
-  border-color: #ffffff30;
+  border-color: #7cc8ff40;
 }
 
-/* Bright L-shaped markers in each corner of the frame */
+/* Bright L-shaped markers in each corner of the frame, in Pokémon yellow */
 .corner {
   position: absolute;
-  width: 28px;
-  height: 28px;
-  border: 0 solid #fff;
+  width: 30px;
+  height: 30px;
+  border: 0 solid var(--sunny);
   transition: border-color 0.2s;
 }
 
-.corner.tl { top: 0; left: 0; border-top-width: 4px; border-left-width: 4px; border-top-left-radius: 16px; }
-.corner.tr { top: 0; right: 0; border-top-width: 4px; border-right-width: 4px; border-top-right-radius: 16px; }
-.corner.bl { bottom: 0; left: 0; border-bottom-width: 4px; border-left-width: 4px; border-bottom-left-radius: 16px; }
-.corner.br { bottom: 0; right: 0; border-bottom-width: 4px; border-right-width: 4px; border-bottom-right-radius: 16px; }
+.corner.tl { top: 0; left: 0; border-top-width: 5px; border-left-width: 5px; border-top-left-radius: 16px; }
+.corner.tr { top: 0; right: 0; border-top-width: 5px; border-right-width: 5px; border-top-right-radius: 16px; }
+.corner.bl { bottom: 0; left: 0; border-bottom-width: 5px; border-left-width: 5px; border-bottom-left-radius: 16px; }
+.corner.br { bottom: 0; right: 0; border-bottom-width: 5px; border-right-width: 5px; border-bottom-right-radius: 16px; }
 
 .viewfinder.scanning .corner {
-  border-color: var(--accent);
+  border-color: #7cc8ff;
 }
 
 /* Glowing line that sweeps over the card while a scan is running */
@@ -275,8 +384,8 @@ input:focus {
   right: 0;
   top: 0;
   height: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 16px 4px var(--accent);
+  background: #7cc8ff;
+  box-shadow: 0 0 18px 5px #3fa4f0;
   opacity: 0;
 }
 
@@ -298,7 +407,7 @@ input:focus {
   margin: 0;
   padding: 0 22%;
   text-align: center;
-  color: #ffffffcc;
+  color: #cfe6ffdd;
   font-size: 0.95rem;
 }
 
@@ -310,25 +419,26 @@ input:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 14px 0 18px;
+  margin: 16px 0 18px;
 }
 
 .controls button {
   flex: 1;
 }
 
-/* "Take a photo" is a <label> around a hidden file input, styled like a big sunny button */
+/* "Take a photo" is a <label> around a hidden file input, styled like a big yellow button */
 .photo-btn {
   flex-basis: 100%;
   padding: 13px 18px;
   border-radius: 999px;
   background: var(--sunny);
-  color: #3b2f25;
+  color: #13234a;
   font-weight: 600;
+  font-size: 1.05rem;
   text-align: center;
   cursor: pointer;
-  box-shadow: 0 4px 14px #f7d56b55;
-  transition: transform 0.1s, filter 0.15s;
+  box-shadow: 0 4px 0 #c79a00, 0 8px 18px #ffcb0555;
+  transition: transform 0.1s, box-shadow 0.1s, filter 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -337,7 +447,8 @@ input:focus {
 }
 
 .photo-btn:active {
-  transform: scale(0.98);
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #c79a00, 0 4px 10px #ffcb0555;
 }
 
 /* Hidden from sight but still reachable with the keyboard */
@@ -365,7 +476,7 @@ input:focus {
   align-items: end;
   padding: 16px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
@@ -382,6 +493,14 @@ input:focus {
 
 .search button {
   border-radius: var(--radius-sm);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.search button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 @media (max-width: 480px) {
@@ -417,6 +536,7 @@ input:focus {
 }
 
 .result {
+  position: relative;
   width: 100%;
   height: 100%;
   padding: 8px 8px 10px;
@@ -431,9 +551,9 @@ input:focus {
 }
 
 .result:hover:not(:disabled) {
-  transform: translateY(-3px);
+  transform: translateY(-3px) rotate(-0.6deg);
   box-shadow: var(--shadow-lift);
-  border-color: var(--border);
+  border-color: var(--accent);
 }
 
 .result img {
@@ -468,20 +588,31 @@ input:focus {
 }
 
 /* ---------------------------------------------------------------------------
-   Chosen card's details
+   Chosen card's details: a Pokédex entry
    --------------------------------------------------------------------------- */
 .detail {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 250px) 1fr;
   gap: 24px;
   margin-top: 20px;
-  padding: 20px;
+  padding: 26px 20px 20px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow);
   scroll-margin-top: 16px;
   animation: rise 0.3s ease-out;
+  overflow: hidden;
+}
+
+/* A blue band across the top of the entry */
+.detail::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 8px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep) 70%, var(--sunny) 70%, var(--sunny) 85%, var(--pokeball) 85%);
 }
 
 @keyframes rise {
@@ -499,18 +630,57 @@ input:focus {
 }
 
 .detail h2 {
-  margin: 0 0 14px;
-  font-size: 1.6rem;
+  margin: 0 0 10px;
+  font-size: 1.75rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
   line-height: 1.15;
+  color: var(--text);
 }
+
+/* HP and types under the name, like the top of a card */
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: var(--type, var(--surface-2));
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 1px #0000004d;
+}
+
+.badge.hp {
+  background: var(--pokeball);
+}
+
+/* The Pokémon TCG's type colors */
+.badge[data-type='Grass'] { --type: #3fa34d; }
+.badge[data-type='Fire'] { --type: #e8572a; }
+.badge[data-type='Water'] { --type: #2a8fdb; }
+.badge[data-type='Lightning'] { --type: #e3b100; }
+.badge[data-type='Psychic'] { --type: #9b4fc4; }
+.badge[data-type='Fighting'] { --type: #b5622f; }
+.badge[data-type='Darkness'] { --type: #2f3b4a; }
+.badge[data-type='Metal'] { --type: #7d8a99; }
+.badge[data-type='Fairy'] { --type: #e46fae; }
+.badge[data-type='Dragon'] { --type: #b08a17; }
+.badge[data-type='Colorless'] { --type: #9aa3ad; }
 
 .detail h3 {
   margin: 22px 0 10px;
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -592,16 +762,38 @@ input:focus {
 }
 
 .collection-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  font-size: 1.3rem;
+  font-size: 1.4rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
+}
+
+/* A little Poké Ball before "My collection" */
+.collection-head h2::before {
+  content: '';
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid var(--text);
+  background:
+    radial-gradient(circle, #fff 3px, var(--text) 3.5px, var(--text) 5.5px, transparent 6px),
+    linear-gradient(var(--pokeball) 45%, var(--text) 45%, var(--text) 55%, #fff 55%);
 }
 
 .collection-total {
-  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  color: var(--accent);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.collection-total:empty {
+  display: none;
 }
 
 .collection .muted {
@@ -610,6 +802,7 @@ input:focus {
   text-align: center;
   border: 2px dashed var(--border);
   border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
 }
 
 .collection .muted[hidden] {
@@ -617,10 +810,6 @@ input:focus {
 }
 
 .saved {
-  position: relative;
-}
-
-.result {
   position: relative;
 }
 
@@ -637,7 +826,7 @@ input:focus {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--sunny);
-  color: #3b2f25;
+  color: #13234a;
   font-size: 0.8rem;
   box-shadow: 0 2px 6px #0003;
 }
@@ -661,18 +850,29 @@ input:focus {
 }
 
 .remove-btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--pokeball);
+  border-color: var(--pokeball);
 }
 
 @media (max-width: 520px) {
   .detail {
     grid-template-columns: 1fr;
-    padding: 16px;
+    padding: 24px 16px 16px;
   }
   .detail img {
     max-width: 260px;
     margin: 0 auto;
+  }
+  .top h1 {
+    font-size: 1.5rem;
+  }
+  .lens {
+    width: 62px;
+    height: 62px;
+  }
+  .logo {
+    width: 46px;
+    height: 46px;
   }
 }
 

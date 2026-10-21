@@ -29,19 +29,22 @@ const HEADER_NOISE = new Set(['BASIC', 'STAGE', 'STAGE1', 'STAGE2', 'HP', 'EVOLV
 // size for tesseract and stops huge photos from making the scan slow.
 const CARD_WIDTH = 1000;
 
-// Tesseract runs in a background "worker". Creating it downloads the English
-// language data (~10 MB), so we create it only once and reuse it for every scan.
-let workerPromise: Promise<Worker> | null = null;
+// Tesseract runs in background "workers". Creating one downloads the English
+// language data (~10 MB, cached by the browser after the first time), so they're
+// created once and reused. There are two, so the header and footer can be read
+// at the same time; each keeps its own settings.
+const workers: Partial<Record<'header' | 'footer', Promise<Worker>>> = {};
 
-function getWorker(): Promise<Worker> {
-  // ??= means "only assign if it's still null", so this runs once
-  workerPromise ??= createWorker('eng');
-  return workerPromise;
+function getWorker(part: 'header' | 'footer'): Promise<Worker> {
+  // ??= means "only assign if it's still unset", so each is created once
+  workers[part] ??= createWorker('eng');
+  return workers[part];
 }
 
 /** Start downloading the OCR model early so the first scan is faster. */
 export function warmUpOcr(): void {
-  void getWorker();
+  void getWorker('header');
+  void getWorker('footer');
 }
 
 // Resize the captured card to CARD_WIDTH, keeping its shape
@@ -56,7 +59,15 @@ function normalizeSize(card: HTMLCanvasElement): HTMLCanvasElement {
 // Crop a fraction of the card, upscale and convert to high-contrast greyscale.
 // x, y, w, h are fractions of the card (0 to 1), e.g. (0, 0, 1, 0.13) = the top 13%.
 // Tesseract reads big, black-and-white text much more reliably, hence the upscale and filter.
-function cropRegion(card: HTMLCanvasElement, x: number, y: number, w: number, h: number, upscale = 2): HTMLCanvasElement {
+function cropRegion(
+  card: HTMLCanvasElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  upscale = 2,
+  filter = 'grayscale(1) contrast(1.6)',
+): HTMLCanvasElement {
   // Convert fractions to pixels
   const sx = card.width * x;
   const sy = card.height * y;
@@ -67,7 +78,7 @@ function cropRegion(card: HTMLCanvasElement, x: number, y: number, w: number, h:
   out.width = Math.round(sw * upscale);
   out.height = Math.round(sh * upscale);
   const ctx = out.getContext('2d')!;
-  ctx.filter = 'grayscale(1) contrast(1.6)';
+  ctx.filter = filter;
   ctx.drawImage(card, sx, sy, sw, sh, 0, 0, out.width, out.height);
   return out;
 }
@@ -131,32 +142,60 @@ function parseNumber(text: string): CardNumber | undefined {
   return { local, total: Number.isNaN(total) ? undefined : total };
 }
 
-// Read the name and number from a captured card image
-export async function scanCard(captured: HTMLCanvasElement): Promise<ScanResult> {
-  const worker = await getWorker();
-  const card = normalizeSize(captured);
-
-  // Pass 1: the header (top 13% of the card).
+// Read the header (top 13% of the card), where the name is printed
+export async function readHeader(card: HTMLCanvasElement): Promise<{ lines: string[]; allText: string; guess: string; raw: string }> {
+  const worker = await getWorker('header');
   // SPARSE_TEXT tells tesseract the text is scattered rather than in paragraphs.
   // An empty whitelist allows any character.
   await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT, tessedit_char_whitelist: '' });
   // `blocks: true` also returns each word's position and size, which pickName needs
-  const header = await worker.recognize(cropRegion(card, 0, 0, 1, 0.13), {}, { blocks: true, text: true });
+  const header = await worker.recognize(cropRegion(normalizeSize(card), 0, 0, 1, 0.13), {}, { blocks: true, text: true });
+  const lines = allWords(header.data.blocks);
+  return {
+    // Each line's words, biggest text first (the name is the biggest text in the header).
+    // Lines tesseract is unsure about are left out: they're usually shapes or
+    // upside-down text that happen to look like letters.
+    lines: lines
+      .filter((line) => line.length && line.reduce((sum, word) => sum + word.confidence, 0) / line.length >= 55)
+      .sort((a, b) => Math.max(0, ...b.map(wordHeight)) - Math.max(0, ...a.map(wordHeight)))
+      .map((line) => line.map((word) => word.text).join(' ')),
+    // Everything read, sure or not, for comparing against a few known names
+    allText: header.data.text,
+    guess: pickName(lines),
+    raw: header.data.text.trim(),
+  };
+}
 
-  // Pass 2: the footer. Restrict to digits, letters and "/" so symbols
-  // printed nearby (rarity icons, the set logo) aren't misread as punctuation.
+// Read the collector number from the footer (bottom 12% of the card)
+export async function readFooter(card: HTMLCanvasElement): Promise<{ number?: CardNumber; raw: string }> {
+  const worker = await getWorker('footer');
+  const normal = normalizeSize(card);
+  // Restrict to digits, letters and "/" so symbols printed nearby (rarity icons,
+  // the set logo) aren't misread as punctuation
   await worker.setParameters({
     tessedit_pageseg_mode: PSM.SPARSE_TEXT,
     tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
   });
   // Collector number is bottom-left on modern cards, bottom-right on older ones,
   // so read the full width of the bottom 12%. The text is tiny, so upscale 3×.
-  const footer = await worker.recognize(cropRegion(card, 0, 0.88, 1, 0.12, 3), {}, { text: true });
+  const footer = await worker.recognize(cropRegion(normal, 0, 0.88, 1, 0.12, 3), {}, { text: true });
+  const number = parseNumber(footer.data.text);
+  if (number) return { number, raw: footer.data.text.trim() };
 
-  return {
-    name: pickName(allWords(header.data.blocks)),
-    number: parseNumber(footer.data.text),
-    rawName: header.data.text.trim(),
-    rawNumber: footer.data.text.trim(),
-  };
+  // Not found: try a taller strip (in case the card was cut a little off) with
+  // much stronger contrast, which helps with glare and grey-on-grey printing
+  const retry = await worker.recognize(cropRegion(normal, 0, 0.84, 1, 0.16, 3, 'grayscale(1) contrast(2.6) brightness(1.1)'), {}, { text: true });
+  const second = parseNumber(retry.data.text);
+  if (second) return { number: second, raw: retry.data.text.trim() };
+
+  // Still nothing: some cards (V, VMAX, ex) print the number light on a dark
+  // band, and tesseract reads dark text on light much better, so flip the colors
+  const inverted = await worker.recognize(cropRegion(normal, 0, 0.84, 1, 0.16, 3, 'grayscale(1) invert(1) contrast(2)'), {}, { text: true });
+  return { number: parseNumber(inverted.data.text), raw: `${footer.data.text.trim()}\n---\n${inverted.data.text.trim()}` };
+}
+
+// Read the name and number from a captured card image
+export async function scanCard(captured: HTMLCanvasElement): Promise<ScanResult> {
+  const [header, footer] = await Promise.all([readHeader(captured), readFooter(captured)]);
+  return { name: header.guess, number: footer.number, rawName: header.raw, rawNumber: footer.raw };
 }

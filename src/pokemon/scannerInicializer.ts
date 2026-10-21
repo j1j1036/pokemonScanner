@@ -98,14 +98,50 @@ export async function findCards(name: string, number?: CardNumber): Promise<Card
   return bySet.length > 0 ? bySet : byNumber;
 }
 
+// How many cards each set officially has (the "/189" printed on its cards), by set ID.
+// Fetched once and shared.
+let setSizes: Promise<Map<string, number>> | null = null;
+
+function getSetSizes(): Promise<Map<string, number>> {
+  setSizes ??= tcgdex.set.list().then((sets) => new Map(sets.map((set) => [set.id, set.cardCount.official])));
+  setSizes.catch(() => {
+    setSizes = null;
+  });
+  return setSizes;
+}
+
+/**
+ * The cards with exactly this collector number, e.g. every card numbered 136 in a
+ * set of 189 cards. The full number usually narrows the whole database down to one
+ * or two cards, so the scanner looks cards up this way first.
+ */
+export async function cardsByNumber(number: CardNumber): Promise<CardResumeModel[]> {
+  if (number.total === undefined) return [];
+  const wanted = normalizeLocalId(number.local);
+  // "like" finds numbers containing these digits ("25" also finds "025" and "125"),
+  // so keep only the exact ones afterwards
+  const [cards, sizes] = await Promise.all([tcgdex.card.list(Query.create().like('localId', wanted)), getSetSizes()]);
+  // A card's ID is its set's ID plus its number: "swsh3-136"
+  const setOf = (id: string) => id.slice(0, id.lastIndexOf('-'));
+  return cards.filter((card) => normalizeLocalId(card.localId) === wanted && sizes.get(setOf(card.id)) === number.total);
+}
+
 // Fetch one card with all its details, by its global ID (e.g. "swsh3-136").
 // Returns null if the ID doesn't exist.
 export async function getCard(id: string): Promise<PricedCard | null> {
   return tcgdex.card.get(id);
 }
 
-export async function getAllNames(): Promise<string[]> {
-  const allCards = await tcgdex.card.list();
-  return allCards.map((card) => card.name);
+// Every card name in the database. It's a big download, and both the search
+// suggestions and the scanner need it, so it's fetched once and shared.
+let allNames: Promise<string[]> | null = null;
+
+export function getAllNames(): Promise<string[]> {
+  allNames ??= tcgdex.card.list().then((cards) => cards.map((card) => card.name));
+  // If it failed, let the next call try again
+  allNames.catch(() => {
+    allNames = null;
+  });
+  return allNames;
 }
 

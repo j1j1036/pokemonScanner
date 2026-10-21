@@ -2,19 +2,20 @@
  * App entry point: builds the page and wires up the buttons.
  *
  * The flow of a scan:
- *   camera.ts                -> grab a picture of the card inside the frame
- *   ocr.ts                   -> read the name and number off that picture
+ *   camera.ts                -> grab the picture (and the part inside the on-screen frame)
+ *   scan.ts                  -> find the card, read its name and number, match them to
+ *                               real cards (using detect.ts, ocr.ts and names.ts)
  *   scannerInicializer.ts    -> look those up in the TCGdex database
  *   this file                -> show the matches / the card's details
  *
  * Saved cards live in collection/store.ts (a Zustand store kept in localStorage).
  */
 import './style.css';
-import { findCards, getCard, getAllNames } from './pokemon/scannerInicializer';
+import { cardsByNumber, findCards, getCard, getAllNames } from './pokemon/scannerInicializer';
 import type { CardNumber, PricedCard } from './pokemon/scannerInicializer';
 import type { CardResumeModel } from '@tcgdex/sdk';
-import { captureGuide, showPhoto, startCamera, stopCamera } from './scanner/camera';
-import { scanCard, warmUpOcr } from './scanner/ocr';
+import { captureGuide, grabFrame, showPhoto, startCamera, stopCamera } from './scanner/camera';
+import { scanPicture, warmUpScanner } from './scanner/scan';
 import { collection, ownedCount } from './collection/store';
 import type { SavedCard } from './collection/store';
 
@@ -27,9 +28,11 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
   <a class="back" href="/">← My projects</a>
+  <!-- Looks like the top of a Pokédex: the big blue lens (with Mimikyu in it) and three small lights -->
   <header class="top">
-    <img class="logo" src="/mimikyu.png" alt="" />
+    <span class="lens"><img class="logo" src="/mimikyu.png" alt="" /></span>
     <div>
+      <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
       <h1>Pokémon Scanner</h1>
       <p class="tagline">Show me a card and I’ll tell you what it’s worth ✨</p>
     </div>
@@ -80,7 +83,7 @@ app.innerHTML = `
       <h2>My collection</h2>
       <span id="collection-total" class="collection-total"></span>
     </div>
-    <p id="collection-empty" class="muted">No cards saved yet. Scan one and tap “Save to collection” 💛</p>
+    <p id="collection-empty" class="muted">No cards saved yet. Scan one and tap “Save to collection” to catch it 💙</p>
     <ul id="collection" class="results"></ul>
   </section>
 
@@ -187,8 +190,8 @@ cameraBtn.addEventListener('click', async () => {
     cameraHint.hidden = true;
     photo.hidden = true;
     viewfinder.classList.add('live');
-    // Start downloading the OCR model now, while the user lines up the card
-    warmUpOcr();
+    // Start downloading the OCR model and card names now, while the user lines up the card
+    warmUpScanner();
   } catch (error) {
     // Usually: permission denied, no camera, or the page isn't on HTTPS
     setStatus(`Couldn't open the camera: ${(error as Error).message}`);
@@ -208,6 +211,7 @@ photoInput.addEventListener('change', async () => {
 
   // The live camera isn't needed while looking at a photo
   if (stream) cameraBtn.click();
+  warmUpScanner();
   try {
     await showPhoto(photo, file);
   } catch {
@@ -220,7 +224,7 @@ photoInput.addEventListener('change', async () => {
 });
 
 // The shared scan flow for both the live camera and photos:
-// capture the frame -> read text -> search
+// capture the picture -> find and read the card -> search
 async function runScan(source: HTMLVideoElement | HTMLImageElement): Promise<void> {
   // Disable the button so a double-tap can't start two scans at once
   scanBtn.disabled = true;
@@ -228,7 +232,9 @@ async function runScan(source: HTMLVideoElement | HTMLImageElement): Promise<voi
   viewfinder.classList.add('scanning');
   try {
     setStatus('Reading card…');
-    const result = await scanCard(captureGuide(source, guide));
+    // The whole picture (to find the card anywhere in it), plus the part inside the
+    // on-screen frame (used if the card's edges can't be found)
+    const result = await scanPicture(grabFrame(source), captureGuide(source, guide));
     // Open the browser dev tools console to see what OCR actually read
     console.debug('OCR header:', result.rawName, '| footer:', result.rawNumber);
 
@@ -238,8 +244,8 @@ async function runScan(source: HTMLVideoElement | HTMLImageElement): Promise<voi
       ? `${result.number.local}${result.number.total !== undefined ? `/${result.number.total}` : ''}`
       : '';
 
-    if (!result.name) {
-      setStatus("Couldn't read the card name. Make sure the card fills the frame, or type it below.");
+    if (!result.name && result.number?.total === undefined) {
+      setStatus("Couldn't read the card. Hold it flat, fill the frame and avoid glare, or type the name below.");
       return;
     }
     await search(result.name, result.number);
@@ -257,11 +263,13 @@ searchForm.addEventListener('submit', async (event) => {
   // Stop the browser from reloading the page, which is what forms do by default
   event.preventDefault();
   const name = nameInput.value.trim();
-  if (!name) {
-    setStatus('Enter a card name to search.');
+  const number = parseNumberInput(numberInput.value);
+  // A full number like "136/189" works on its own too
+  if (!name && number?.total === undefined) {
+    setStatus('Enter a card name, or its full number like 136/189.');
     return;
   }
-  await search(name, parseNumberInput(numberInput.value));
+  await search(name, number);
 });
 
 nameInput.addEventListener('change', () => {
@@ -276,15 +284,17 @@ nameInput.addEventListener('change', () => {
 // Look up a card and decide what to show:
 //   no matches -> a message, one match -> its details, several -> a grid to pick from
 async function search(name: string, number?: CardNumber): Promise<void> {
-  setStatus(`Searching for “${name}”${number ? ` #${number.local}` : ''}…`);
+  const label = name ? `“${name}”${number ? ` #${number.local}` : ''}` : `#${number?.local}/${number?.total}`;
+  setStatus(`Searching for ${label}…`);
   // Clear out the previous search's results
   resultsEl.innerHTML = '';
   detailEl.hidden = true;
 
   try {
-    const cards = await findCards(name, number);
+    // No name (only the number could be read): every card with that full number
+    const cards = name ? await findCards(name, number) : await cardsByNumber(number!);
     if (cards.length === 0) {
-      setStatus(`No cards found for “${name}”.`);
+      setStatus(`No cards found for ${label}.`);
       return;
     }
     if (cards.length === 1) {
@@ -371,7 +381,7 @@ function headlinePrice(card: PricedCard): SavedCard['price'] {
 // Text for the save button, e.g. "Save to collection" or "Add another (you have 2)"
 function saveLabel(id: string): string {
   const owned = ownedCount(id);
-  return owned === 0 ? '💛 Save to collection' : `💛 Add another (you have ${owned})`;
+  return owned === 0 ? '💙 Save to collection' : `💙 Add another (you have ${owned})`;
 }
 
 // Fetch the full card and show its image, details and prices
@@ -388,15 +398,20 @@ async function showCard(id: string): Promise<void> {
     ['Set', `${card.set.name} · ${card.localId}${card.set.cardCount?.official ? `/${card.set.cardCount.official}` : ''}`],
     ['Rarity', card.rarity],
     ['Category', card.category],
-    ['HP', card.hp],
-    ['Types', card.types?.join(', ')],
     ['Illustrator', card.illustrator],
   ].filter(([, value]) => value !== undefined && value !== '');
+
+  // HP and types as colored badges under the name (the colors are in style.css)
+  const badges = [
+    ...(card.hp ? [`<span class="badge hp">HP ${escapeHtml(String(card.hp))}</span>`] : []),
+    ...(card.types ?? []).map((type) => `<span class="badge" data-type="${escapeHtml(type)}">${escapeHtml(type)}</span>`),
+  ];
 
   detailEl.innerHTML = `
     ${card.image ? `<img src="${escapeHtml(card.getImageURL('high', 'webp'))}" alt="${escapeHtml(card.name)}" />` : ''}
     <div>
       <h2>${escapeHtml(card.name)}</h2>
+      ${badges.length ? `<div class="badges">${badges.join('')}</div>` : ''}
       <button id="save-btn" type="button" class="primary save-btn" data-id="${escapeHtml(card.id)}">${saveLabel(card.id)}</button>
       <dl>${details.map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}</dl>
       <h3>Prices</h3>
