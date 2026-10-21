@@ -10,7 +10,7 @@
  * Saved cards live in collection/store.ts (a Zustand store kept in localStorage).
  */
 import './style.css';
-import { findCards, getCard } from './pokemon/scannerInicializer';
+import { findCards, getCard, getAllNames } from './pokemon/scannerInicializer';
 import type { CardNumber, PricedCard } from './pokemon/scannerInicializer';
 import type { CardResumeModel } from '@tcgdex/sdk';
 import { captureGuide, showPhoto, startCamera, stopCamera } from './scanner/camera';
@@ -60,10 +60,13 @@ app.innerHTML = `
 
   <!-- Filled in automatically by a scan, but can also be typed in by hand -->
   <form id="search" class="search">
-    <label>Name <input id="name-input" name="name" placeholder="e.g. Charizard ex" autocomplete="off" /></label>
-    <label>Number <input id="number-input" name="number" placeholder="e.g. 136/189" autocomplete="off" /></label>
-    <button type="submit">Search</button>
-  </form>
+  <label>Name
+    <input id="name-input" name="name" list="name-suggestions" placeholder="e.g. Charizard ex" autocomplete="off" />
+    <datalist id="name-suggestions"></datalist>
+  </label>
+  <label>Number <input id="number-input" name="number" placeholder="e.g. 136/189" autocomplete="off" /></label>
+  <button type="submit">Search</button>
+</form>
 
   <!-- Status messages, the grid of possible matches, and the chosen card's details -->
   <p id="status" class="status" role="status"></p>
@@ -98,6 +101,7 @@ const cameraBtn = document.querySelector<HTMLButtonElement>('#camera-btn')!;
 const scanBtn = document.querySelector<HTMLButtonElement>('#scan-btn')!;
 const searchForm = document.querySelector<HTMLFormElement>('#search')!;
 const nameInput = document.querySelector<HTMLInputElement>('#name-input')!;
+const nameSuggestions = document.querySelector<HTMLDataListElement>('#name-suggestions')!;
 const numberInput = document.querySelector<HTMLInputElement>('#number-input')!;
 const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
 const resultsEl = document.querySelector<HTMLUListElement>('#results')!;
@@ -137,6 +141,25 @@ function parseNumberInput(value: string): CardNumber | undefined {
   const totalNumber = Number(total);
   return { local, total: total && !Number.isNaN(totalNumber) ? totalNumber : undefined };
 }
+
+async function loadNameSuggestions(): Promise<void> {
+  try {
+    const names = await getAllNames();
+    // Many cards share a name (lots of "Pikachu"), so remove duplicates and sort A–Z
+    const unique = [...new Set(names)].sort((a, b) => a.localeCompare(b));
+    nameSuggestions.replaceChildren(
+      ...unique.map((name) => {
+        const option = document.createElement('option');
+        option.value = name;
+        return option;
+      }),
+    );
+  } catch (error) {
+    // Suggestions are a nice extra; the search still works without them
+    console.warn("Couldn't load name suggestions:", error);
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Buttons
@@ -238,6 +261,11 @@ searchForm.addEventListener('submit', async (event) => {
     return;
   }
   await search(name, parseNumberInput(numberInput.value));
+});
+
+nameInput.addEventListener('change', () => {
+  const name = nameInput.value.trim();
+  if (name) searchForm.requestSubmit();
 });
 
 // ---------------------------------------------------------------------------
@@ -460,3 +488,4 @@ function renderCollection(): void {
 // Re-draw whenever the collection changes, and once now for the saved cards
 collection.subscribe(renderCollection);
 renderCollection();
+loadNameSuggestions();

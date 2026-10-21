@@ -103,3 +103,9 @@ export async function findCards(name: string, number?: CardNumber): Promise<Card
 export async function getCard(id: string): Promise<PricedCard | null> {
   return tcgdex.card.get(id);
 }
+
+export async function getAllNames(): Promise<string[]> {
+  const allCards = await tcgdex.card.list();
+  return allCards.map((card) => card.name);
+}
+

@@ -30,37 +30,62 @@ export function stopCamera(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+// A picture the scanner can read: the live <video>, or an <img> holding a photo the user took
+export type Picture = HTMLVideoElement | HTMLImageElement;
+
+// The picture's real size in pixels (videos and images name this differently)
+export function pictureSize(source: Picture): { width: number; height: number } {
+  return source instanceof HTMLVideoElement
+    ? { width: source.videoWidth, height: source.videoHeight }
+    : { width: source.naturalWidth, height: source.naturalHeight };
+}
+
+// Both the video and the photo use CSS `object-fit: cover`, so the real image is
+// scaled up to fill its element and its edges are cropped off-screen.
+// This works out that scale and how much hangs off each side (it's centered).
+function coverFit(source: Picture) {
+  const { width, height } = pictureSize(source);
+  const box = source.getBoundingClientRect();
+  const scale = Math.max(box.width / width, box.height / height);
+  return { box, scale, offsetX: (width * scale - box.width) / 2, offsetY: (height * scale - box.height) / 2 };
+}
+
+// Where a point in the picture's own pixels appears on screen,
+// measured from the top-left corner of the video/photo element
+export function toScreen(source: Picture, point: { x: number; y: number }): { x: number; y: number } {
+  const { scale, offsetX, offsetY } = coverFit(source);
+  return { x: point.x * scale - offsetX, y: point.y * scale - offsetY };
+}
+
+// Copy the whole picture into a canvas. Huge camera-app photos are shrunk to
+// at most `maxSize` pixels on their long side, which is plenty for reading a card.
+export function grabFrame(source: Picture, maxSize = 2000): HTMLCanvasElement {
+  const { width, height } = pictureSize(source);
+  const scale = Math.min(1, maxSize / Math.max(width, height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  canvas.getContext('2d')!.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
 /**
  * Copy the part of the picture under the on-screen guide into a canvas.
- * The picture is either the live <video> or an <img> holding a photo the user took.
+ * Used when the card's edges can't be found automatically.
  *
- * The tricky part: both use CSS `object-fit: cover`, so the real image is
- * scaled up and its edges are cropped off-screen. The guide's position
- * is in screen pixels, so we convert it back into image pixels.
+ * The guide's position is in screen pixels, so we convert it back into image pixels.
  */
-export function captureGuide(source: HTMLVideoElement | HTMLImageElement, guide: HTMLElement): HTMLCanvasElement {
-  // The picture's real size in pixels (videos and images name this differently)
-  const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
-  const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
-
-  // Where the picture and the guide frame are on screen
-  const sourceBox = source.getBoundingClientRect();
+export function captureGuide(source: Picture, guide: HTMLElement): HTMLCanvasElement {
+  const { box, scale, offsetX, offsetY } = coverFit(source);
   const guideBox = guide.getBoundingClientRect();
 
-  // How much the image was scaled to cover its element...
-  const scale = Math.max(sourceBox.width / width, sourceBox.height / height);
-  // ...and how much of it hangs off each side (it's centered)
-  const offsetX = (width * scale - sourceBox.width) / 2;
-  const offsetY = (height * scale - sourceBox.height) / 2;
-
   // The guide rectangle in the image's own pixels (s = "source")
-  const sx = (guideBox.left - sourceBox.left + offsetX) / scale;
-  const sy = (guideBox.top - sourceBox.top + offsetY) / scale;
+  const sx = (guideBox.left - box.left + offsetX) / scale;
+  const sy = (guideBox.top - box.top + offsetY) / scale;
   const sw = guideBox.width / scale;
   const sh = guideBox.height / scale;
 
-  // Draw just that rectangle of the picture into a new canvas.
-  // The result is a straight-on picture of the card.
+  // Draw just that rectangle of the picture into a new canvas
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(sw);
   canvas.height = Math.round(sh);

@@ -93,14 +93,11 @@ canvas {
   font-size: 0.92rem;
 }
 
-/* Mimikyu mascot: sits on a sunny blob and gently bobs up and down */
+/* Mimikyu mascot: gently bobs up and down */
 .logo {
   flex: none;
   width: 64px;
   height: 64px;
-  padding: 0;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 60%, var(--sunny) 0 0, #f7d56b55 0 70%, transparent 71%);
   animation: bob 2.6s ease-in-out infinite;
   transform-origin: 50% 90%;
 }
