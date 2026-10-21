@@ -38,11 +38,21 @@ import { renderRrChart, signed } from './chart';
 // Page layout
 // ---------------------------------------------------------------------------
 
+// Small inline icons; they take the text color
+const LOCK_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 7V5a4 4 0 1 1 8 0v2h.5A1.5 1.5 0 0 1 14 8.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-5A1.5 1.5 0 0 1 3.5 7H4Zm2 0h4V5a2 2 0 1 0-4 0v2Z"/></svg>';
+const CLOCK_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 2a5 5 0 1 0 0 10A5 5 0 0 0 8 3Zm.75 1.5V7.7l2.1 1.2-.75 1.3L7.25 8.6V4.5h1.5Z"/></svg>';
+const EXTERNAL_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9 2h5v5h-1.5V4.56L7.53 9.53 6.47 8.47l4.97-4.97H9V2ZM3.5 4H7v1.5H3.5v7h7V9H12v3.5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 2 12.5v-7A1.5 1.5 0 0 1 3.5 4Z"/></svg>';
+
 // valorant/index.html only contains an empty <div id="app">; we fill it in here
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
   <a class="back" href="/">← My projects</a>
+  <div class="layout">
+  <main class="main">
   <header class="top">
     <h1>Valorant Tracker</h1>
     <p class="tagline">Look up any player’s rank, RR and recent matches.</p>
@@ -101,28 +111,45 @@ app.innerHTML = `
     <div id="store" class="store"><p class="muted">Loading the store…</p></div>
   </section>
 
-  <section id="my-shop-panel" class="panel" hidden>
-    <h2>My shop</h2>
-    <p class="sub">
-      Your own daily offers and Night Market. These need your Riot login, so you log in on
-      Riot’s page and paste the link it ends on here. The login lasts about an hour and
-      isn’t saved anywhere.
-    </p>
-    <ol class="steps">
-      <li><a href="${RIOT_LOGIN_URL}" target="_blank" rel="noopener">Log in with Riot</a> (opens Riot’s login page).</li>
-      <li>You’ll land on playvalorant.com. Copy the whole address from the address bar.</li>
-      <li>Paste it below.</li>
-    </ol>
-    <form id="shop-form" class="search">
-      <label class="riot-id">Link from the address bar
-        <input id="shop-link" name="link" type="password" placeholder="https://playvalorant.com/opt_in#access_token=…"
-          autocomplete="off" spellcheck="false" required />
-      </label>
-      <button type="submit">Show my shop</button>
-    </form>
-    <p id="shop-status" class="status" role="status"></p>
-    <div id="my-shop" class="store"></div>
-  </section>
+  </main>
+
+  <!-- Only for the site owner (see setUpOwnerKey). Beside the page on wide screens. -->
+  <aside id="my-shop-panel" class="sidebar" hidden>
+    <section class="panel shop-panel">
+      <div class="shop-title">
+        <h2>My shop</h2>
+        <span class="private">${LOCK_ICON}Only you</span>
+      </div>
+
+      <div id="shop-login">
+        <p class="sub">Your daily offers and Night Market. Log in on Riot’s site, then paste the link you land on.</p>
+        <ol class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <a class="riot-login" href="${RIOT_LOGIN_URL}" target="_blank" rel="noopener">Log in with Riot ${EXTERNAL_ICON}</a>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <p>Copy the whole address from <strong>playvalorant.com</strong></p>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <form id="shop-form" class="shop-form">
+              <label class="visually-hidden" for="shop-link">Link from the address bar</label>
+              <input id="shop-link" name="link" type="password" placeholder="Paste the link here"
+                autocomplete="off" spellcheck="false" required />
+              <button type="submit">Show my shop</button>
+            </form>
+          </li>
+        </ol>
+        <p class="fine-print">The login lasts about an hour and is never saved.</p>
+      </div>
+
+      <p id="shop-status" class="status" role="status"></p>
+      <div id="my-shop" class="my-shop"></div>
+    </section>
+  </aside>
+  </div>
 
   <footer class="credits">
     Unofficial fan project. Valorant Tracker isn’t endorsed by Riot Games and doesn’t reflect the views
@@ -147,6 +174,7 @@ const summaryEl = document.querySelector<HTMLDivElement>('#match-summary')!;
 const matchesEl = document.querySelector<HTMLUListElement>('#matches')!;
 const storeEl = document.querySelector<HTMLDivElement>('#store')!;
 const myShopPanel = document.querySelector<HTMLElement>('#my-shop-panel')!;
+const shopLoginEl = document.querySelector<HTMLDivElement>('#shop-login')!;
 const shopForm = document.querySelector<HTMLFormElement>('#shop-form')!;
 const shopLinkInput = document.querySelector<HTMLInputElement>('#shop-link')!;
 const shopStatusEl = document.querySelector<HTMLParagraphElement>('#shop-status')!;
@@ -645,6 +673,16 @@ function setUpOwnerKey(): string | null {
 
 const ownerKey = setUpOwnerKey();
 myShopPanel.hidden = !ownerKey;
+// Makes the page wider, with the shop beside it (see .with-sidebar in style.css)
+app.classList.toggle('with-sidebar', !!ownerKey);
+
+// While the shop loads: grey placeholder cards in its shape
+const SKELETON = `<ul class="offers">${'<li class="offer skeleton"><div class="offer-art"></div><div class="offer-info"><span></span><span></span></div></li>'.repeat(4)}</ul>`;
+
+function showShopLogin(): void {
+  myShopEl.replaceChildren();
+  shopLoginEl.hidden = false;
+}
 
 async function loadMyShop(link: string): Promise<void> {
   const tokens = parseLoginLink(link);
@@ -653,13 +691,15 @@ async function loadMyShop(link: string): Promise<void> {
     return;
   }
 
-  shopStatusEl.textContent = 'Loading your shop…';
-  myShopEl.replaceChildren();
+  shopStatusEl.textContent = '';
+  shopLoginEl.hidden = true;
+  myShopEl.innerHTML = SKELETON;
   let shop;
   try {
     shop = await getMyShop(tokens, ownerKey!);
   } catch (error) {
     shopStatusEl.textContent = errorMessage(error, "The server didn't accept your owner key. Open the page with #key= and the right key.");
+    showShopLogin();
     return;
   }
 
@@ -669,39 +709,51 @@ async function loadMyShop(link: string): Promise<void> {
   const [daily, nightMarket] = await Promise.all([withInfo(shop.daily.items), withInfo(shop.nightMarket?.items ?? [])]);
 
   const list = (entries: Awaited<ReturnType<typeof withInfo>>) =>
-    `<ul class="items">${entries
+    `<ul class="offers">${entries
       .map(
-        ({ item, info }) => `<li>
-          ${info?.icon ? `<img class="item-icon" src="${escapeHtml(info.icon)}" alt="" />` : '<span class="item-icon"></span>'}
-          <p>${escapeHtml(info?.name ?? 'Unknown item')}</p>
-          <p class="muted">${vp(item.price)}${
-            item.discountPercent ? ` <s>${item.basePrice.toLocaleString('en')}</s> −${item.discountPercent}%` : ''
-          }</p>
+        ({ item, info }) => `<li class="offer">
+          <div class="offer-art">
+            ${info?.icon ? `<img src="${escapeHtml(info.icon)}" alt="" />` : ''}
+            ${item.discountPercent ? `<span class="discount">−${item.discountPercent}%</span>` : ''}
+          </div>
+          <div class="offer-info">
+            <p class="offer-name">${escapeHtml(info?.name ?? 'Unknown item')}</p>
+            <p class="offer-price">${vp(item.price)}${
+              item.discountPercent ? `<s class="muted">${item.basePrice.toLocaleString('en')}</s>` : ''
+            }</p>
+          </div>
         </li>`,
       )
       .join('')}</ul>`;
 
-  shopStatusEl.textContent = '';
-  myShopEl.innerHTML = `
-    <article>
-      <div class="bundle-head">
-        <h3>Daily offers</h3>
-        <p class="muted">New offers in ${timeLeft(shop.daily.secondsLeft)}</p>
+  // data-ends: when the countdown runs out, so updateShopTimers can keep it current
+  const group = (title: string, secondsLeft: number, entries: Awaited<ReturnType<typeof withInfo>>, className = '') => `
+    <div class="shop-group ${className}">
+      <div class="shop-group-head">
+        <h3>${title}</h3>
+        <span class="timer" data-ends="${Date.now() + secondsLeft * 1000}">${CLOCK_ICON}<span>${timeLeft(secondsLeft)}</span></span>
       </div>
-      ${list(daily)}
-    </article>
-    ${
-      shop.nightMarket
-        ? `<article>
-            <div class="bundle-head">
-              <h3>Night Market</h3>
-              <p class="muted">Closes in ${timeLeft(shop.nightMarket.secondsLeft)}</p>
-            </div>
-            ${list(nightMarket)}
-          </article>`
-        : ''
-    }
+      ${list(entries)}
+    </div>`;
+
+  const dailyTotal = shop.daily.items.reduce((total, item) => total + item.price, 0);
+  myShopEl.innerHTML = `
+    ${group('Daily offers', shop.daily.secondsLeft, daily)}
+    ${shop.nightMarket ? group('Night Market', shop.nightMarket.secondsLeft, nightMarket, 'night-market') : ''}
+    <div class="shop-footer">
+      <p class="muted">All 4 daily offers: ${vp(dailyTotal)}</p>
+      <button type="button" class="link-button" id="shop-reset">Log in again</button>
+    </div>
   `;
+  myShopEl.querySelector('#shop-reset')!.addEventListener('click', showShopLogin);
+}
+
+// Count the shop's timers down while the page is open
+function updateShopTimers(): void {
+  for (const timer of myShopEl.querySelectorAll<HTMLElement>('[data-ends]')) {
+    const secondsLeft = (Number(timer.dataset.ends) - Date.now()) / 1000;
+    timer.querySelector('span')!.textContent = secondsLeft > 0 ? timeLeft(secondsLeft) : 'Refreshed, log in again';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +776,7 @@ shopForm.addEventListener('submit', (event) => {
 
 renderRecent();
 void loadStore();
+setInterval(updateShopTimers, 30_000);
 
 // A shared link like ?player=Name%23TAG&platform=pc looks that player up straight away
 const params = new URLSearchParams(location.search);

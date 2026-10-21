@@ -666,27 +666,386 @@ span.item-icon {
   color: inherit;
 }
 
-/* "My shop": the log-in steps */
-.steps {
-  margin: 0;
-  padding-left: 1.3em;
+/* ---------------------------------------------------------------------------
+   Layout. For the site owner the page gets wider, with "My shop" in a
+   sidebar on the right; on narrower screens the sidebar goes under the page.
+   --------------------------------------------------------------------------- */
+.layout {
   display: grid;
-  gap: 4px;
+  gap: 20px;
 }
 
-.steps a {
-  color: var(--accent);
+.main {
+  min-width: 0;
+}
+
+#app.with-sidebar {
+  max-width: 1240px;
+}
+
+@media (min-width: 1100px) {
+  #app.with-sidebar .layout {
+    grid-template-columns: minmax(0, 1fr) 360px;
+    align-items: start;
+  }
+
+  /* Stays in view while scrolling, and scrolls on its own if it's taller than the window */
+  .sidebar {
+    position: sticky;
+    top: 20px;
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
+    border-radius: var(--radius);
+    scrollbar-width: thin;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.shop-panel svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+   My shop
+   --------------------------------------------------------------------------- */
+.shop-panel {
+  /* A thin red line along the top, like the game's store */
+  border-top: 3px solid var(--accent);
+}
+
+.shop-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.shop-title h2 {
+  margin: 0;
+}
+
+.private {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.shop-panel .sub {
+  margin: 0 0 16px;
+}
+
+/* The three log-in steps, each with a numbered circle */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.steps li p {
+  margin-top: 10px;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.step-num {
+  margin-top: 7px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
-#shop-form {
+.riot-login,
+.shop-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.riot-login {
+  width: 100%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.riot-login:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.shop-form {
+  display: grid;
+  gap: 8px;
+}
+
+.shop-form input {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.shop-form input:focus-visible,
+.riot-login:focus-visible,
+.shop-form button:focus-visible,
+.link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.shop-form button {
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.shop-form button:hover {
+  background: var(--accent-hover);
+}
+
+.fine-print {
   margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
-#my-shop .bundle-head {
+.shop-panel .status:empty {
+  display: none;
+}
+
+.my-shop {
+  display: grid;
+  gap: 20px;
+}
+
+.my-shop:empty {
+  display: none;
+}
+
+.shop-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.shop-group-head h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One offer: weapon picture on top, name and price under it */
+.offers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.offer {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  transition:
+    border-color 0.15s,
+    transform 0.15s;
+}
+
+.offer:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.offer-art {
+  position: relative;
+  height: 84px;
+  padding: 10px 20px;
+  background: radial-gradient(ellipse at 50% 120%, #ff465533, transparent 70%), var(--surface);
+}
+
+.offer-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 10px #0000002e);
+}
+
+.offer-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.offer-name {
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offer-price {
+  display: flex;
   align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
 }
 
-#my-shop s {
-  margin-left: 4px;
+.offer-price s {
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.discount {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* The Night Market gets a purple glow instead of red */
+.night-market .offer-art {
+  background: radial-gradient(ellipse at 50% 120%, #8b5cf640, transparent 70%), var(--surface);
+}
+
+.night-market .offer:hover {
+  border-color: #8b5cf6;
+}
+
+/* Two offers side by side in the sidebar's place under the page, when there's room */
+@media (min-width: 560px) and (max-width: 1099px) {
+  .offers {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Loading placeholders that gently pulse */
+.offer.skeleton .offer-art {
+  background: var(--surface);
+}
+
+.offer.skeleton .offer-info span {
+  height: 12px;
+  width: 55%;
+  border-radius: 4px;
+  background: var(--border);
+}
+
+.offer.skeleton .offer-info span + span {
+  width: 18%;
+}
+
+.offer.skeleton {
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  to {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offer.skeleton {
+    animation: none;
+  }
+
+  .offer,
+  .offer:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+.shop-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.shop-footer .vp {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
 }
