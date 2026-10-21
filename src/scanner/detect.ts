@@ -7,6 +7,9 @@
  * downloaded the first time it's needed, not when the page opens.
  */
 import type * as OpenCv from '@techstark/opencv-js';
+// `?url` makes Vite copy opencv.js into the build and give us its address,
+// without bundling it (see loadOpenCv for why)
+import openCvUrl from '@techstark/opencv-js/dist/opencv.js?url';
 import { CARD_ASPECT } from './camera';
 
 type CV = typeof OpenCv;
@@ -33,19 +36,34 @@ const DETECT_SIZE = 640;
 // Loading OpenCV
 // ---------------------------------------------------------------------------
 
-// The OpenCV object is wrapped in { cv } because it has a .then() method of its
-// own, which would confuse `await` if we returned it from a promise directly
+// The OpenCV object has a .then() method of its own, so JavaScript treats it like
+// a promise. Handing it straight back from a promise (which `import()` would do)
+// makes the browser try to "resolve" it forever and freezes the page.
+// So we load it with a plain <script> tag, which puts it on window.cv, and always
+// pass it around wrapped in { cv }, never on its own.
 let cvPromise: Promise<{ cv: CV }> | null = null;
 
 export function loadOpenCv(): Promise<{ cv: CV }> {
-  cvPromise ??= import('@techstark/opencv-js').then(async (module) => {
-    const cvModule = module.default as unknown as CV;
-    // The object exists straight away, but its functions only appear once its
+  cvPromise ??= (async () => {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = openCvUrl;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Couldn't load the card detector"));
+      document.head.append(script);
+    });
+    const win = window as unknown as { cv?: CV };
+    // window.cv exists straight away, but its functions only appear once its
     // WebAssembly code has started (a second or two). Check until cv.Mat is there.
-    while (!('Mat' in cvModule)) {
+    while (!win.cv || !('Mat' in win.cv)) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    return { cv: cvModule };
+    return { cv: win.cv };
+  })();
+  // If loading failed, let the next call try again instead of failing forever
+  cvPromise.catch(() => {
+    cvPromise = null;
   });
   return cvPromise;
 }
@@ -169,7 +187,7 @@ export async function flattenCard(picture: HTMLCanvasElement, quad: Quad): Promi
   let [tl, tr, br, bl] = quad;
 
   // Card lying sideways in the picture: turn the corners a quarter so the card
-  // comes out portrait. (If it comes out upside down, the OCR step retries flipped.)
+  // comes out portrait. (It can come out upside down; TODO: have OCR retry flipped.)
   if (distance(tl, tr) > distance(tl, bl)) [tl, tr, br, bl] = [bl, tl, tr, br];
 
   const src = cv.imread(picture);
